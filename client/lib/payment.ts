@@ -58,3 +58,44 @@ export async function createPayment(params: {
   );
   return mapPayment(res);
 }
+
+export type KhaltiInitiateResponse = {
+  pidx: string;
+  paymentUrl: string;
+  payment_url?: string;
+  expiresAt?: string;
+  expires_at?: string;
+  expiresIn?: number;
+  expires_in?: number;
+  orderId: string;
+  purchaseOrderId?: string;
+  amount: number;
+};
+
+export async function initiateKhaltiPayment(orderId: string): Promise<KhaltiInitiateResponse> {
+  const res = await apiClient.post<KhaltiInitiateResponse>(
+    "/payments/khalti/initiate",
+    { orderId },
+    { auth: true }
+  );
+  return {
+    pidx: (res as any).pidx,
+    paymentUrl: (res as any).paymentUrl || (res as any).payment_url,
+    payment_url: (res as any).paymentUrl || (res as any).payment_url,
+    expiresAt: (res as any).expiresAt || (res as any).expires_at,
+    expires_at: (res as any).expiresAt || (res as any).expires_at,
+    expiresIn: (res as any).expiresIn ?? (res as any).expires_in,
+    expires_in: (res as any).expiresIn ?? (res as any).expires_in,
+    orderId: (res as any).orderId || orderId,
+    amount: (res as any).amount ?? 0,
+  };
+}
+
+export async function lookupKhalti(pidx: string): Promise<{ pidx: string; status: string; total_amount?: number; transaction_id?: string; fee?: number; refunded?: boolean }> {
+  const res = await apiClient.post<any>(
+    "/payments/khalti/lookup",
+    { pidx },
+    { auth: true }
+  );
+  return res;
+}

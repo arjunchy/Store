@@ -16,6 +16,7 @@ import {
   getPayment,
   clearCheckout,
 } from "@/lib/checkout";
+import { initiateKhaltiPayment } from "@/lib/payment";
 import type { ShippingAddress, DeliveryMethod, PaymentMethod } from "@/lib/types";
 
 const formatUSD = formatNPR;
@@ -111,7 +112,24 @@ function ReviewInner() {
         try { await refresh(); } catch {}
       }
 
-      // Direct success – payment is handled separately (wallet/cod). No gateway redirect required for clothing branch.
+      // Khalti ePayment: must redirect to Khalti web – do NOT auto-confirm. Only proceed after real payment.
+      if (payment === "khalti") {
+        try {
+          const khalti = await initiateKhaltiPayment(order.id);
+          const url = (khalti as any).paymentUrl || (khalti as any).payment_url;
+          if (!url) throw new Error("Khalti did not return payment_url – check KHALTI_SECRET_KEY");
+          try { sessionStorage.setItem("khalti_pidx", khalti.pidx); sessionStorage.setItem("khalti_orderId", order.id); } catch {}
+          window.location.href = url; // redirect to https://test-pay.khalti.com/?pidx=...
+          return;
+        } catch (e: any) {
+          const msg = e?.data?.message || e?.message || "Failed to initiate Khalti payment. Please check KHALTI_SECRET_KEY (test-admin.khalti.com live_secret_key) or try again.";
+          setError(msg);
+          setPlacing(false);
+          console.error("Khalti initiate failed – not auto-confirming, order remains UNPAID", e);
+          return;
+        }
+      }
+
       router.push("/order-confirmed");
     } catch (e: unknown) {
       const msg = (e as any)?.data?.message || (e as Error)?.message || "Failed to place order. Please try again.";
@@ -360,7 +378,7 @@ function ReviewInner() {
               >
                 {placing ? (
                   <>
-                    <span className="w-4 h-4 rounded-full border-2 border-on-primary/30 border-t-on-primary animate-spin" /> Redirecting to {payment === "esewa" ? "eSewa" : "Khalti"}...
+                    <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Redirecting to {payment === "esewa" ? "eSewa" : "Khalti"}...
                   </>
                 ) : (
                   <>

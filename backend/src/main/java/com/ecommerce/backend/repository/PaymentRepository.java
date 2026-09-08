@@ -16,4 +16,11 @@ public interface PaymentRepository extends JpaRepository<Payment, String> {
 
     @Query("SELECT p FROM Payment p WHERE p.order.id = :orderId")
     List<Payment> findByOrderId(@Param("orderId") String orderId);
+
+    Optional<Payment> findByPidx(String pidx);
+
+    @Query("SELECT p FROM Payment p WHERE p.order.id = :orderId AND p.status = :status ORDER BY p.createdAt DESC")
+    Optional<Payment> findFirstByOrderIdAndStatusOrderByCreatedAtDesc(@Param("orderId") String orderId, @Param("status") PaymentStatus status);
+
+    Optional<Payment> findFirstByOrderIdOrderByCreatedAtDesc(String orderId);
 }
