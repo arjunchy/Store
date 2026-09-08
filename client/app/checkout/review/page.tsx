@@ -15,8 +15,6 @@ import {
   getDelivery,
   getPayment,
   clearCheckout,
-  initiatePayment,
-  submitEsewaForm,
 } from "@/lib/checkout";
 import type { ShippingAddress, DeliveryMethod, PaymentMethod } from "@/lib/types";
 
@@ -31,7 +29,7 @@ export default function OrderReviewPage() {
 
 function ReviewInner() {
   const router = useRouter();
-  const { cart, subtotal } = useCart();
+  const { cart, subtotal, clearCart, refresh } = useCart();
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState("");
   const [address, setAddress] = useState<ShippingAddress | null>(null);
@@ -77,8 +75,6 @@ function ReviewInner() {
     }
     setPlacing(true);
     try {
-      // 1. Create the order server-side. Its total is authoritative — the
-      // amount is never trusted from the client for the payment itself.
       const order = await createOrder({
         addressId: address.id,
         paymentMethod: payment,
@@ -86,28 +82,37 @@ function ReviewInner() {
         tax,
       });
 
-      // 2. Cart/checkout draft state can be cleared now — the order exists
-      // regardless of how the payment step below resolves.
-      await clearCheckout().catch(() => { });
+      // Persist snapshot for order-confirmed page (expects apexcommerce_last_order_snapshot/id)
+      try {
+        const snapshot = {
+          address,
+          delivery,
+          payment,
+          cart: [...cart],
+          subtotal,
+          deliveryCost,
+          tax,
+          total,
+          itemCount,
+          placedAt: new Date().toISOString(),
+          orderId: order.id,
+          orderNumber: (order as any).orderNumber || order.id,
+        };
+        localStorage.setItem("apexcommerce_last_order_snapshot", JSON.stringify(snapshot));
+        localStorage.setItem("apexcommerce_last_order_id", (order as any).orderNumber || order.id);
+      } catch {}
 
-      // 3. Ask the backend to start a real gateway payment attempt. This
-      // returns either a Khalti redirect URL or eSewa's signed form fields —
-      // there is no "instant success" path anymore.
-      const init = await initiatePayment(order.id, payment);
+      await clearCheckout().catch(() => {});
 
-      if (init.type === "REDIRECT" && init.redirectUrl) {
-        // Khalti: send the browser straight to Khalti's hosted payment page.
-        window.location.href = init.redirectUrl;
-        return; // navigating away — nothing left to reset
+      // Ensure frontend cart reflects server clear – remove ordered items (entire cart for clothing branch)
+      try {
+        await clearCart();
+      } catch {
+        try { await refresh(); } catch {}
       }
 
-      if (init.type === "FORM_POST" && init.formUrl && init.formFields) {
-        // eSewa: requires a real form POST, not a fetch/XHR.
-        submitEsewaForm(init.formUrl, init.formFields);
-        return; // navigating away — nothing left to reset
-      }
-
-      throw new Error("Unexpected response from payment gateway. Please try again.");
+      // Direct success – payment is handled separately (wallet/cod). No gateway redirect required for clothing branch.
+      router.push("/order-confirmed");
     } catch (e: unknown) {
       const msg = (e as any)?.data?.message || (e as Error)?.message || "Failed to place order. Please try again.";
       setError(msg);

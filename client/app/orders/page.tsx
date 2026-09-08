@@ -34,7 +34,7 @@ function OrdersInner() {
     search: search || undefined,
   }), [search]);
 
-  const { data: orders, page, setPage, totalPages, totalElements, loading, error, refresh } = usePaginatedData(fetcher, { page: pageFromUrl, size: 10 });
+  const { data: orders, setData, page, setPage, totalPages, totalElements, loading, error } = usePaginatedData(fetcher, { page: pageFromUrl, size: 10 });
 
   const [cancelling, setCancelling] = useState<string | null>(null);
 
@@ -42,8 +42,9 @@ function OrdersInner() {
     if (!confirm("Cancel this order?")) return;
     setCancelling(id);
     try {
-      await orderApi.cancelOrder(id);
-      await refresh();
+      const updated = await orderApi.cancelOrder(id);
+      // Optimistic patch – update only this order, no full page reload (keeps interactivity)
+      setData((prev) => prev.map((o) => (o.id === id ? { ...o, status: updated.status, payment_status: (updated as any).payment_status ?? (updated as any).paymentStatus ?? updated.paymentStatus, paymentStatus: (updated as any).paymentStatus ?? updated.payment_status, delivery_status: (updated as any).delivery_status ?? (updated as any).deliveryStatus, deliveryStatus: (updated as any).deliveryStatus ?? (updated as any).delivery_status } as any : o)));
     } catch (e: any) {
       alert(e?.message || "Cancel failed");
     } finally {

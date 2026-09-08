@@ -5,6 +5,8 @@ type ReviewResponse = {
   id: string;
   productId: string;
   userId: string;
+  userName?: string;
+  username?: string;
   rating: number;
   comment: string;
   isVerifiedPurchase: boolean;
@@ -21,6 +23,7 @@ function mapReview(res: ReviewResponse): Review {
     comment: res.comment,
     is_verified_purchase: res.isVerifiedPurchase,
     isVerifiedPurchase: res.isVerifiedPurchase,
+    userName: (res as any).userName ?? res.userName ?? res.username ?? undefined,
     createdAt: res.createdAt,
   };
 }
@@ -62,12 +65,13 @@ export async function submitReview(params: {
 
 export async function updateReview(
   id: string,
-  patch: Partial<Pick<Review, "rating" | "comment">>
+  patch: Partial<Pick<Review, "rating" | "comment">> & { productId?: string }
 ): Promise<Review | null> {
   try {
+    if (!patch.productId) throw new Error("productId required for review update");
     const res = await apiClient.put<ReviewResponse>(
       `/reviews/${id}`,
-      { rating: patch.rating, comment: patch.comment, productId: "" },
+      { rating: patch.rating, comment: patch.comment, productId: patch.productId },
       { auth: true }
     );
     return mapReview(res);

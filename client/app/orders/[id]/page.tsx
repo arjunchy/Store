@@ -53,8 +53,11 @@ function DetailsInner({ id }: { id: string }) {
     if (!order || !confirm("Cancel this order? This cannot be undone.")) return;
     setCancelling(true);
     try {
-      await orderApi.cancelOrder(order.id);
-      await load();
+      const updated = await orderApi.cancelOrder(order.id);
+      // Optimistic update – keep interactivity, no full reload
+      setOrder((prev: any) => prev ? { ...prev, status: updated.status, payment_status: (updated as any).payment_status ?? updated.paymentStatus, paymentStatus: (updated as any).paymentStatus, delivery_status: (updated as any).delivery_status, deliveryStatus: (updated as any).deliveryStatus } : prev);
+      // Refresh history silently without toggling main loading
+      orderApi.getHistory(order.id).then(setHistory).catch(()=>{});
     } catch (e: any) {
       alert(e?.message || "Cancel failed");
     } finally {
