@@ -1,0 +1,27 @@
+{
+  "name": "apexcommerce-client",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node --no-warnings -r ./polyfill-localstorage.js ./node_modules/next/dist/bin/next dev",
+    "build": "node --no-warnings -r ./polyfill-localstorage.js ./node_modules/next/dist/bin/next build",
+    "start": "node --no-warnings -r ./polyfill-localstorage.js ./node_modules/next/dist/bin/next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^15.5.7",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.7",
+    "@types/react": "19.0.1",
+    "@types/react-dom": "19.0.2",
+    "autoprefixer": "10.4.20",
+    "eslint": "9.18.0",
+    "eslint-config-next": "^15.5.7",
+    "postcss": "8.4.49",
+    "tailwindcss": "3.4.17",
+    "typescript": "5.7.3"
+  }
+}

@@ -1,0 +1,48 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Spring Boot / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+*.factorypath
+
+# OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Uploads
+uploads/
+
+# Local configuration
+application-local.properties
+application-local.yml
+application-local.yaml
+
+# Temporary files
+tmp/
+*.tmp
+*.swp
+*.swo
+*~
+
+# Misc
+*.bak
