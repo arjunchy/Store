@@ -44,6 +44,12 @@ public class Payment {
     @Column(name = "transaction_id", nullable = false, unique = true)
     private String transactionId;
 
+    @Column(name = "pidx")
+    private String pidx;
+
+    @Column(name = "payment_url", length = 500)
+    private String paymentUrl;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
     @Builder.Default

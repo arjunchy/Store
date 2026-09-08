@@ -7,10 +7,12 @@ import com.ecommerce.backend.entity.User;
 import com.ecommerce.backend.enums.UserRole;
 import com.ecommerce.backend.mapper.UserMapper;
 import com.ecommerce.backend.repository.AddressRepository;
+import com.ecommerce.backend.repository.CartRepository;
 import com.ecommerce.backend.repository.OrderRepository;
 import com.ecommerce.backend.repository.RefreshTokenRepository;
 import com.ecommerce.backend.repository.ReviewRepository;
 import com.ecommerce.backend.repository.UserRepository;
+import com.ecommerce.backend.repository.WishlistRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -26,6 +28,8 @@ import java.util.Optional;
 @Service
 @Slf4j
 public class UserServiceImpl implements UserService {
+
+    private static final String SYSTEM_ADMIN_EMAIL = "ecommerce@gmail.com";
 
     @Autowired
     private UserRepository userRepository;
@@ -47,6 +51,12 @@ public class UserServiceImpl implements UserService {
 
     @Autowired
     private AddressRepository addressRepository;
+
+    @Autowired
+    private CartRepository cartRepository;
+
+    @Autowired
+    private WishlistRepository wishlistRepository;
 
     @Override
     @Transactional
@@ -142,10 +152,18 @@ public class UserServiceImpl implements UserService {
     public void deleteCurrentUser(String email) {
 
         log.info("Attempting to soft-delete user with email: {}", email);
+        if (SYSTEM_ADMIN_EMAIL.equalsIgnoreCase(email)) {
+            log.warn("Delete blocked - cannot delete system admin: {}", email);
+            throw new IllegalArgumentException("Cannot delete system admin account");
+        }
         User user = userRepository.findActiveByEmail(email).orElseThrow(() -> {
             log.warn("Delete failed - user not found for email: {}", email);
             return new IllegalArgumentException("User not found");
         });
+        if (SYSTEM_ADMIN_EMAIL.equalsIgnoreCase(user.getEmail())) {
+            log.warn("Delete blocked - cannot delete system admin userId: {}", user.getUserId());
+            throw new IllegalArgumentException("Cannot delete system admin account");
+        }
         user.setDeletedAt(LocalDateTime.now());
         userRepository.save(user);
         try { refreshTokenRepository.deleteAllByUserId(user.getUserId()); } catch (Exception e) { log.warn("Failed to revoke tokens for soft-deleted user {}: {}", user.getUserId(), e.getMessage()); }
@@ -195,6 +213,10 @@ public class UserServiceImpl implements UserService {
             log.warn("Change role failed - user not found with id: {}", userId);
             throw new IllegalArgumentException("User not found");
         }
+        if (SYSTEM_ADMIN_EMAIL.equalsIgnoreCase(user.getEmail())) {
+            log.warn("Change role blocked - cannot modify system admin: {} ({})", userId, user.getEmail());
+            throw new IllegalArgumentException("Cannot change role of system admin");
+        }
         if (user.getDeletedAt() != null) {
             log.warn("Change role failed - user is deactivated: {}", userId);
             throw new IllegalArgumentException("User is deactivated");
@@ -215,6 +237,10 @@ public class UserServiceImpl implements UserService {
         if (user == null) {
             log.warn("Toggle status failed - user not found with id: {}", userId);
             throw new IllegalArgumentException("User not found");
+        }
+        if (SYSTEM_ADMIN_EMAIL.equalsIgnoreCase(user.getEmail())) {
+            log.warn("Toggle status blocked - cannot modify system admin: {} ({})", userId, user.getEmail());
+            throw new IllegalArgumentException("Cannot deactivate system admin account");
         }
         if (activate) {
             if (user.getDeletedAt() == null) {
@@ -241,36 +267,84 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public void hardDeleteUser(String userId) {
-        log.info("Hard deleting user with id: {}", userId);
+        log.info("Admin hard deleting user with id: {} – will cascade delete all related data", userId);
         User user = userRepository.findByIdIncludingDeleted(userId)
                 .orElseGet(() -> userRepository.findById(userId).orElse(null));
         if (user == null) {
             log.warn("Hard delete failed - user not found with id: {}", userId);
             throw new IllegalArgumentException("User not found");
         }
-        boolean hasOrders = false;
-        boolean hasReviews = false;
-        boolean hasAddresses = false;
-        try { hasOrders = orderRepository.existsByUserUserId(userId); } catch (Exception e) { log.debug("existsByUserUserId check failed", e); }
-        try { hasReviews = reviewRepository.existsByUserUserId(userId); } catch (Exception e) { log.debug("review exists check failed", e); }
-        try { hasAddresses = addressRepository.existsByUserUserId(userId); } catch (Exception e) { log.debug("address check failed", e); }
-        if (hasOrders || hasReviews || hasAddresses) {
-            String reason = "User has dependencies:" +
-                    (hasOrders ? " orders" : "") +
-                    (hasReviews ? " reviews" : "") +
-                    (hasAddresses ? " addresses" : "") +
-                    " — deactivate instead; hard delete only for zero-dependency accounts";
-            log.warn("Hard delete blocked for user {}: {}", userId, reason);
-            throw new IllegalStateException(reason);
+        if (SYSTEM_ADMIN_EMAIL.equalsIgnoreCase(user.getEmail())) {
+            log.warn("Hard delete blocked - cannot delete system admin: {} ({})", userId, user.getEmail());
+            throw new IllegalArgumentException("Cannot delete system admin account");
         }
+        // Admin hard delete – delete ALL data related to user, not just zero-dependency accounts
+        // This includes carts, wishlists, addresses, reviews, orders (with items/payments/history), refresh tokens
         try {
-            try { refreshTokenRepository.deleteAllByUserId(userId); } catch (Exception ignored) {}
+            // 1. Refresh tokens
+            try { refreshTokenRepository.deleteAllByUserId(userId); } catch (Exception e) { log.debug("refresh token delete failed for {}", userId, e); }
+
+            // 2. Carts (and cart items via cascade/orphanRemoval)
+            try {
+                cartRepository.findByUserId(userId).ifPresent(cart -> {
+                    try { cartRepository.delete(cart); cartRepository.flush(); } catch (Exception e) { log.warn("Failed to delete cart for user {}: {}", userId, e.getMessage()); }
+                });
+            } catch (Exception e) { log.debug("cart delete failed for {}", userId, e); }
+
+            // 3. Wishlists
+            try {
+                var wishlists = wishlistRepository.findByUserIdWithProduct(userId);
+                if (wishlists != null && !wishlists.isEmpty()) {
+                    wishlistRepository.deleteAll(wishlists);
+                    wishlistRepository.flush();
+                }
+            } catch (Exception e) { log.debug("wishlist delete failed for {}", userId, e); }
+
+            // 4. Addresses
+            try {
+                var addresses = addressRepository.findByUserId(userId);
+                if (addresses != null && !addresses.isEmpty()) {
+                    addressRepository.deleteAll(addresses);
+                    addressRepository.flush();
+                }
+            } catch (Exception e) { log.debug("address delete failed for {}", userId, e); }
+
+            // 5. Reviews – use findAll + filter (no direct findByUserUserId)
+            try {
+                var allReviews = reviewRepository.findAll();
+                var reviews = allReviews.stream().filter(r -> r.getUser() != null && userId.equals(r.getUser().getUserId())).toList();
+                if (!reviews.isEmpty()) {
+                    reviewRepository.deleteAll(reviews);
+                    reviewRepository.flush();
+                }
+            } catch (Exception e) { log.debug("review delete failed for {}", userId, e); }
+
+            // 6. Orders – delete all orders for user (cascade deletes order_items, payments, status_history)
+            try {
+                // Use paginated fetch to get all order ids
+                var pageable = org.springframework.data.domain.PageRequest.of(0, 100);
+                org.springframework.data.domain.Page<com.ecommerce.backend.entity.Order> page;
+                do {
+                    page = orderRepository.findByUserId(userId, pageable);
+                    if (page.hasContent()) {
+                        var orders = page.getContent();
+                        // Ensure related collections are loaded for cascade
+                        for (var o : orders) {
+                            try { orderRepository.delete(o); } catch (Exception ex) { log.warn("Failed to delete order {} for user {}: {}", o.getId(), userId, ex.getMessage()); }
+                        }
+                        orderRepository.flush();
+                    }
+                    pageable = pageable.next();
+                } while (page.hasNext());
+            } catch (Exception e) { log.warn("Order cascade delete failed for user {}: {}", userId, e.getMessage()); }
+
+            // 7. Finally hard delete user itself (native query bypasses soft-delete)
             userRepository.hardDeleteById(userId);
-            log.info("Successfully hard-deleted user with id: {}", userId);
-        } catch (IllegalStateException e) {
+            log.info("Successfully hard-deleted user {} and all related data (admin cascade)", userId);
+        } catch (IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {
-            log.error("Failed to hard delete user with id: {}", userId, e);
+            log.error("Failed to hard delete user with id: {} (admin cascade)", userId, e);
             throw new IllegalStateException("Hard delete failed: " + e.getMessage(), e);
         }
     }

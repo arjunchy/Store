@@ -6,6 +6,7 @@ public enum PaymentStatus {
     EXPIRED,
     REFUNDING,
     REFUNDED,
+    INITIATED,
 
     @Deprecated PENDING,
     @Deprecated COMPLETED,

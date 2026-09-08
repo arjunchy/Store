@@ -156,7 +156,7 @@ public class UserController {
                 int p = page != null ? page : 0;
                 int s = size != null ? size : 20;
                 if (s > 100) s = 100;
-                org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(p, s, org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+                org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(p, s, org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "created_at"));
                 org.springframework.data.domain.Page<UserResponse> pagedResult = userService.getAllUsersPaginated(includeDeleted, search, pageable);
                 return ResponseEntity.ok(pagedResult);
             }

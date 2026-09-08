@@ -501,29 +501,29 @@ export default function AdminOrdersPage() {
                           />
                         </td>
                          <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                           <select
-                             value={payment}
-                             onChange={(e) => handlePaymentChange(o.id, e.target.value as PaymentStatus)}
-                             disabled={updating === o.id}
-                             className="px-2 py-1 rounded-lg border border-[#d6d3d1] bg-[#fafaf9] text-[11px] font-semibold focus:border-[#b45309] outline-none disabled:opacity-50"
-                           >
-                             {PAYMENT_STATUSES.map((ps) => {
-                               const isCurrent = ps === payment;
-                               const isValid = isValidPaymentTransition(payment, ps);
-                               return (
-                                 <option
-                                   key={ps}
-                                   value={ps}
-                                   disabled={!isValid && !isCurrent}
-                                   title={!isValid && !isCurrent ? getDisabledReason(payment, ps) : undefined}
-                                 >
-                                   {getPaymentStatusConfig(ps).label}
-                                   {isCurrent ? " (current)" : !isValid ? " (disabled)" : ""}
-                                 </option>
-                               );
-                             })}
-                           </select>
-                         </td>
+                            <select
+                              value={payment}
+                              onChange={(e) => handlePaymentChange(o.id, e.target.value as PaymentStatus)}
+                              disabled={updating === o.id}
+                              className="px-2 py-1 rounded-lg border border-[#d6d3d1] bg-[#fafaf9] text-[11px] font-semibold focus:border-[#b45309] outline-none disabled:opacity-50"
+                            >
+                              {PAYMENT_STATUSES.map((ps) => {
+                                const isCurrent = ps === payment;
+                                const isValid = isValidPaymentTransition(payment, ps);
+                                return (
+                                  <option
+                                    key={ps}
+                                    value={ps}
+                                    disabled={!isValid && !isCurrent}
+                                    title={!isValid && !isCurrent ? getDisabledReason(payment, ps) : undefined}
+                                  >
+                                    {getPaymentStatusConfig(ps).label}
+                                    {isCurrent ? " (current)" : !isValid ? " (disabled)" : ""}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </td>
                         <td className="px-4 py-3 text-[12px] text-[#57534e] max-w-[160px]">
                           <div className="truncate">{o.items.map((it) => it.name ?? it.product_id).join(", ") || "—"}</div>
                           <div className="text-[11px]">{o.items.length} items</div>
@@ -728,33 +728,33 @@ export default function AdminOrdersPage() {
                          })}
                        </div>
                      </div>
-                     <div className="grid grid-cols-2 gap-2">
-                       <div>
-                         <p className="text-[11px] font-semibold tracking-widest text-[#57534e] uppercase mb-1">Payment</p>
-                         <select
-                           value={(detail.payment_status ?? (detail as unknown as { paymentStatus: string }).paymentStatus) as string}
-                           onChange={(e) => handlePaymentChange(detail.id, e.target.value as PaymentStatus)}
-                           disabled={!!updating}
-                           className="w-full bg-[#fafaf9] border border-[#d6d3d1] rounded-lg px-2 py-2 text-[12px] font-medium focus:border-[#b45309] outline-none disabled:opacity-50"
-                         >
-                           {PAYMENT_STATUSES.map((ps) => {
-                             const cur = (detail.payment_status ?? (detail as unknown as { paymentStatus: string }).paymentStatus ?? "UNPAID") as string;
-                             const isCurrent = ps === cur;
-                             const isValid = isValidPaymentTransition(cur, ps);
-                             return (
-                               <option
-                                 key={ps}
-                                 value={ps}
-                                 disabled={!isValid && !isCurrent}
-                                 title={!isValid && !isCurrent ? getDisabledReason(cur, ps) : undefined}
-                               >
-                                 {getPaymentStatusConfig(ps).label}
-                                 {isCurrent ? " (current)" : !isValid ? " (disabled)" : ""}
-                               </option>
-                             );
-                           })}
-                         </select>
-                       </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <p className="text-[11px] font-semibold tracking-widest text-[#57534e] uppercase mb-1">Payment</p>
+                          <select
+                            value={(detail.payment_status ?? (detail as unknown as { paymentStatus: string }).paymentStatus) as string}
+                            onChange={(e) => handlePaymentChange(detail.id, e.target.value as PaymentStatus)}
+                            disabled={!!updating}
+                            className="w-full bg-[#fafaf9] border border-[#d6d3d1] rounded-lg px-2 py-2 text-[12px] font-medium focus:border-[#b45309] outline-none disabled:opacity-50"
+                          >
+                            {PAYMENT_STATUSES.map((ps) => {
+                              const cur = (detail.payment_status ?? (detail as unknown as { paymentStatus: string }).paymentStatus ?? "UNPAID") as string;
+                              const isCurrent = ps === cur;
+                              const isValid = isValidPaymentTransition(cur, ps);
+                              return (
+                                <option
+                                  key={ps}
+                                  value={ps}
+                                  disabled={!isValid && !isCurrent}
+                                  title={!isValid && !isCurrent ? getDisabledReason(cur, ps) : undefined}
+                                >
+                                  {getPaymentStatusConfig(ps).label}
+                                  {isCurrent ? " (current)" : !isValid ? " (disabled)" : ""}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
                        <div>
                          <p className="text-[11px] font-semibold tracking-widest text-[#57534e] uppercase mb-1">Delivery</p>
                          <select

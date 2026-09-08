@@ -48,7 +48,10 @@ export default function AdminUsersPage() {
 
   const filtered = users.filter((u) => roleFilter === "ALL" || u.role === roleFilter);
 
+  const isSystemAdmin = (u: User) => u.email.toLowerCase() === "ecommerce@gmail.com";
+
   const handleRoleChange = async (user: User, newRole: string) => {
+    if (isSystemAdmin(user)) { setError("Cannot change role of system admin (ecommerce@gmail.com)"); return; }
     if (user.isDeleted) { setError("Deactivated user — activate first"); return; }
     setActing(user.id);
     setError("");
@@ -64,6 +67,7 @@ export default function AdminUsersPage() {
   };
 
   const handleToggleActivateDirect = async (user: User, activate: boolean) => {
+    if (isSystemAdmin(user)) { setError("Cannot modify system admin account"); return; }
     if (activate && !user.isDeleted) { setError("User already active"); return; }
     if (!activate && user.isDeleted) { setError("User already deactivated"); return; }
     setActing(user.id);
@@ -79,9 +83,10 @@ export default function AdminUsersPage() {
   };
 
   const handleHardDelete = async (user: User) => {
+    if (isSystemAdmin(user)) { setError("Cannot delete system admin account (ecommerce@gmail.com)"); return; }
     if (user.isDeleted === false || user.isDeleted === undefined) {
     }
-    if (!confirm(`Hard delete user ${user.email}? This only works for zero-dependency accounts (no orders/reviews/addresses). Deactivate instead for accounts with history. Continue?`)) return;
+    if (!confirm(`Hard delete user ${user.email}? This will cascade delete all related data (orders, reviews, addresses, carts, wishlists). Continue?`)) return;
     setActing(user.id);
     try {
       await hardDeleteUser(user.id);
@@ -179,32 +184,43 @@ export default function AdminUsersPage() {
                     const displayName = (u.username ?? u.email?.split("@")[0] ?? "?").toString();
                     const safeId = u.id ?? (u as unknown as { userId?: string }).userId ?? "";
                     const isDeleted = !!(u as any).isDeleted || !!(u as any).deletedAt;
+                    const isSystemAdminRow = isSystemAdmin(u);
                     return (
-                      <tr key={safeId || displayName} className={`hover:bg-[#fafaf9] transition-colors ${isDeleted ? "opacity-60 bg-[#fee2e2]/5" : ""}`}>
+                      <tr key={safeId || displayName} className={`hover:bg-[#fafaf9] transition-colors ${isDeleted ? "opacity-60 bg-[#fee2e2]/5" : ""} ${isSystemAdminRow ? "bg-amber-50/50" : ""}`}>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
                             <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${isDeleted ? "bg-[#fee2e2] text-[#b91c1c]" : "bg-[#fef3c7] text-[#b45309]"}`}>
                               <span className="font-semibold text-[12px]">{displayName.slice(0, 2).toUpperCase()}</span>
                             </div>
                             <div>
-                              <div className="font-medium text-[13px] text-[#1c1917] flex items-center gap-1">{displayName} {isDeleted && <span className="text-[10px] bg-error text-on-error px-1 py-0.5 rounded">Deactivated</span>}</div>
+                              <div className="font-medium text-[13px] text-[#1c1917] flex items-center gap-1">
+                                {displayName} {isDeleted && <span className="text-[10px] bg-error text-on-error px-1 py-0.5 rounded">Deactivated</span>}
+                              </div>
                               <div className="font-mono text-[11px] text-[#57534e] truncate max-w-[120px]">{safeId ? safeId.slice(0, 12) : "—"}</div>
                             </div>
                           </div>
                         </td>
                         <td className="px-4 py-3 text-[13px] text-[#57534e]">{u.email}</td>
                         <td className="px-4 py-3">
-                          <select
-                            value={u.role}
-                            onChange={(e) => handleRoleChange(u, e.target.value)}
-                            disabled={acting === u.id || isDeleted}
-                            className="bg-[#fafaf9] border border-[#d6d3d1] rounded-lg px-2 py-1.5 text-[11px] font-semibold focus:border-[#b45309] outline-none disabled:opacity-40"
-                            title={isDeleted ? "Activate user first" : "Change role"}
-                          >
-                            <option value="ROLE_USER">ROLE_USER</option>
-                            <option value="ROLE_ADMIN">ROLE_ADMIN</option>
-                          </select>
-                          {acting === u.id && <span className="ml-1 material-symbols-outlined animate-spin text-[12px] text-[#b45309]">progress_activity</span>}
+                          {isSystemAdminRow ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#0c0a09] text-white text-[11px] font-bold border border-[#292524]">
+                              <span className="material-symbols-outlined text-[12px]">shield</span> System Admin
+                            </span>
+                          ) : (
+                            <>
+                              <select
+                                value={u.role}
+                                onChange={(e) => handleRoleChange(u, e.target.value)}
+                                disabled={acting === u.id || isDeleted}
+                                className="bg-[#fafaf9] border border-[#d6d3d1] rounded-lg px-2 py-1.5 text-[11px] font-semibold focus:border-[#b45309] outline-none disabled:opacity-40"
+                                title={isDeleted ? "Activate user first" : "Change role"}
+                              >
+                                <option value="ROLE_USER">ROLE_USER</option>
+                                <option value="ROLE_ADMIN">ROLE_ADMIN</option>
+                              </select>
+                              {acting === u.id && <span className="ml-1 material-symbols-outlined animate-spin text-[12px] text-[#b45309]">progress_activity</span>}
+                            </>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           <span className={`text-[11px] font-semibold px-2 py-1 rounded-full border ${isDeleted ? "bg-[#fee2e2] text-[#b91c1c] border-[#fecaca]" : "bg-[#15803d]/15 text-[#15803d] border-[#15803d]/20"}`}>{isDeleted ? "Deactivated" : "Active"}</span>
@@ -214,25 +230,25 @@ export default function AdminUsersPage() {
                           <div className="flex items-center justify-end gap-1">
                             <button
                               onClick={() => handleToggleActivateDirect(u, false)}
-                              disabled={acting === u.id || isDeleted}
+                              disabled={acting === u.id || isDeleted || isSystemAdminRow}
                               className="p-1.5 rounded-lg hover:bg-[#ffedd5]/30 text-[#57534e] hover:text-[#b45309] transition-colors disabled:opacity-30"
-                              title="Deactivate (soft delete, revokes tokens)"
+                              title={isSystemAdminRow ? "Cannot deactivate system admin" : "Deactivate (soft delete, revokes tokens)"}
                             >
                               <span className="material-symbols-outlined text-[18px]">block</span>
                             </button>
                             <button
                               onClick={() => handleToggleActivateDirect(u, true)}
-                              disabled={acting === u.id || !isDeleted}
+                              disabled={acting === u.id || !isDeleted || isSystemAdminRow}
                               className="p-1.5 rounded-lg hover:bg-[#15803d]/15 text-[#57534e] hover:text-[#15803d] transition-colors disabled:opacity-30"
-                              title="Activate (restore)"
+                              title={isSystemAdminRow ? "System admin cannot be deactivated" : "Activate (restore)"}
                             >
                               <span className="material-symbols-outlined text-[18px]">check_circle</span>
                             </button>
                             <button
                               onClick={() => handleHardDelete(u)}
-                              disabled={acting === u.id}
-                              className="p-1.5 rounded-lg hover:bg-[#fef2f2] text-[#57534e] hover:text-[#b91c1c] transition-colors disabled:opacity-30"
-                              title="Hard delete — only zero-dependency accounts"
+                              disabled={acting === u.id || isSystemAdminRow}
+                              className="p-1.5 rounded-lg hover:bg-[#fef2f2] text-[#57534e] hover:text-[#b91c1c] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                              title={isSystemAdminRow ? "Cannot delete system admin account" : "Hard delete — cascade delete all related data"}
                             >
                               <span className="material-symbols-outlined text-[18px]">delete_forever</span>
                             </button>
