@@ -320,22 +320,19 @@ public class UserServiceImpl implements UserService {
             } catch (Exception e) { log.debug("review delete failed for {}", userId, e); }
 
             // 6. Orders – delete all orders for user (cascade deletes order_items, payments, status_history)
+            // Fix pagination bug: always fetch page 0, otherwise deleting page 0 shifts page 1 to 0 and skips rows
             try {
-                // Use paginated fetch to get all order ids
-                var pageable = org.springframework.data.domain.PageRequest.of(0, 100);
-                org.springframework.data.domain.Page<com.ecommerce.backend.entity.Order> page;
-                do {
-                    page = orderRepository.findByUserId(userId, pageable);
-                    if (page.hasContent()) {
-                        var orders = page.getContent();
-                        // Ensure related collections are loaded for cascade
-                        for (var o : orders) {
-                            try { orderRepository.delete(o); } catch (Exception ex) { log.warn("Failed to delete order {} for user {}: {}", o.getId(), userId, ex.getMessage()); }
-                        }
-                        orderRepository.flush();
+                while (true) {
+                    var page = orderRepository.findByUserId(userId, org.springframework.data.domain.PageRequest.of(0, 100));
+                    if (!page.hasContent()) break;
+                    var orders = page.getContent();
+                    for (var o : orders) {
+                        try { orderRepository.delete(o); } catch (Exception ex) { log.warn("Failed to delete order {} for user {}: {}", o.getId(), userId, ex.getMessage()); }
                     }
-                    pageable = pageable.next();
-                } while (page.hasNext());
+                    orderRepository.flush();
+                    if (!page.hasNext() && page.getNumberOfElements() < 100) break;
+                    // loop again from 0 to get next batch after deletion
+                }
             } catch (Exception e) { log.warn("Order cascade delete failed for user {}: {}", userId, e.getMessage()); }
 
             // 7. Finally hard delete user itself (native query bypasses soft-delete)

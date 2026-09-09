@@ -7,6 +7,7 @@ import com.ecommerce.backend.entity.Payment;
 import com.ecommerce.backend.enums.OrderPaymentStatus;
 import com.ecommerce.backend.enums.PaymentMethod;
 import com.ecommerce.backend.enums.PaymentStatus;
+import com.ecommerce.backend.repository.CartRepository;
 import com.ecommerce.backend.repository.OrderRepository;
 import com.ecommerce.backend.repository.PaymentRepository;
 import com.ecommerce.backend.mapper.PaymentMapper;
@@ -34,6 +35,9 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Autowired
     private PaymentMapper paymentMapper;
+
+    @Autowired
+    private CartRepository cartRepository;
 
     @Override
     @Transactional
@@ -118,7 +122,6 @@ public class PaymentServiceImpl implements PaymentService {
             try {
                 if (result.isSuccess()) {
                     order.setPaymentStatus(OrderPaymentStatus.PAID);
-                    // Auto-confirm if still processing
                     if (order.getStatus() == com.ecommerce.backend.enums.OrderStatus.PROCESSING) {
                         order.setStatus(com.ecommerce.backend.enums.OrderStatus.CONFIRMED);
                         log.info("Order {} auto CONFIRMED on successful payment", order.getId());
@@ -130,6 +133,20 @@ public class PaymentServiceImpl implements PaymentService {
                 }
                 orderRepository.save(order);
                 log.debug("Order payment status saved for orderId: {}", order.getId());
+                if (result.isSuccess()) {
+                    try {
+                        cartRepository.findByUserId(userId).ifPresent(cart -> {
+                            if (cart.getCartItems() != null && !cart.getCartItems().isEmpty()) {
+                                int size = cart.getCartItems().size();
+                                cart.getCartItems().clear();
+                                cartRepository.save(cart);
+                                log.info("Cleared {} items from cart for user {} after PAID order {}", size, userId, order.getId());
+                            }
+                        });
+                    } catch (Exception ce) {
+                        log.warn("Failed to clear cart after PAID order {} for user {}", order.getId(), userId, ce);
+                    }
+                }
             } catch (Exception e) {
                 log.error("Failed to update order payment status for orderId: {}", order.getId(), e);
                 throw e;

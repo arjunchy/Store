@@ -22,27 +22,29 @@ export function usePaginatedData<T>(
   const [error, setError] = useState<string | null>(null);
   const [params, setParams] = useState<Record<string, any>>(initialParams);
 
-  const fetchData = useCallback(async () => {
-    let mounted = true;
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetcher({ page, size, ...params });
-      if (!mounted) return;
+      const res = await fetcher({ page, size, ...params, signal });
+      if (signal?.aborted) return;
       setData(res.content ?? []);
       setTotalElements(res.totalElements ?? 0);
       setTotalPages(res.totalPages ?? 0);
     } catch (err: any) {
-      if (!mounted) return;
+      if (signal?.aborted) return;
+      // Ignore abort errors
+      if (err?.name === "AbortError") return;
       setError(err?.message || "Failed to load");
     } finally {
-      if (mounted) setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
-    return () => { mounted = false; };
   }, [fetcher, page, size, params]);
 
   useEffect(() => {
-    fetchData();
+    const ctrl = new AbortController();
+    fetchData(ctrl.signal);
+    return () => ctrl.abort();
   }, [fetchData]);
 
   return {

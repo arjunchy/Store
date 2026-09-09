@@ -6,13 +6,16 @@ import com.ecommerce.backend.entity.Payment;
 import com.ecommerce.backend.enums.OrderPaymentStatus;
 import com.ecommerce.backend.enums.PaymentMethod;
 import com.ecommerce.backend.enums.PaymentStatus;
+import com.ecommerce.backend.repository.CartRepository;
 import com.ecommerce.backend.repository.OrderRepository;
 import com.ecommerce.backend.repository.PaymentRepository;
 import com.ecommerce.backend.repository.OrderItemRepository;
 import com.ecommerce.backend.entity.OrderItem;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientException;
@@ -30,7 +33,8 @@ public class KhaltiService {
     private final OrderRepository orderRepository;
     private final PaymentRepository paymentRepository;
     private final OrderItemRepository orderItemRepository;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final CartRepository cartRepository;
+    private RestTemplate restTemplate;
 
     @Value("${khalti.secret-key:}")
     private String secretKey;
@@ -53,10 +57,20 @@ public class KhaltiService {
     @Value("${app.payment.website-url:http://localhost:3000}")
     private String websiteUrl;
 
-    public KhaltiService(OrderRepository orderRepository, PaymentRepository paymentRepository, OrderItemRepository orderItemRepository) {
+    public KhaltiService(OrderRepository orderRepository, PaymentRepository paymentRepository, OrderItemRepository orderItemRepository, CartRepository cartRepository) {
         this.orderRepository = orderRepository;
         this.paymentRepository = paymentRepository;
         this.orderItemRepository = orderItemRepository;
+        this.cartRepository = cartRepository;
+    }
+
+    @PostConstruct
+    void initRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(timeoutMs);
+        factory.setReadTimeout(timeoutMs);
+        this.restTemplate = new RestTemplate(factory);
+        log.info("Khalti RestTemplate initialized with timeout {}ms", timeoutMs);
     }
 
     private String baseUrl() {
@@ -228,12 +242,26 @@ public class KhaltiService {
                 if ("Completed".equalsIgnoreCase(status)) {
                     payment.setStatus(PaymentStatus.PAID);
                     payment.setTransactionId(transactionId != null ? transactionId : payment.getTransactionId());
-                    OrderPaymentStatus before = payment.getOrder().getPaymentStatus();
                     payment.getOrder().setPaymentStatus(OrderPaymentStatus.PAID);
                     if (payment.getOrder().getStatus() == com.ecommerce.backend.enums.OrderStatus.PROCESSING) {
                         payment.getOrder().setStatus(com.ecommerce.backend.enums.OrderStatus.CONFIRMED);
                     }
                     log.info("Khalti Completed for pidx {} order {}: PAID", pidx, orderId);
+                    try {
+                        String uid = payment.getOrder().getUser() != null ? payment.getOrder().getUser().getUserId() : null;
+                        if (uid != null) {
+                            cartRepository.findByUserId(uid).ifPresent(cart -> {
+                                if (cart.getCartItems() != null && !cart.getCartItems().isEmpty()) {
+                                    int size = cart.getCartItems().size();
+                                    cart.getCartItems().clear();
+                                    cartRepository.save(cart);
+                                    log.info("Cleared {} items from cart for user {} after Khalti Completed order {}", size, uid, orderId);
+                                }
+                            });
+                        }
+                    } catch (Exception ce) {
+                        log.warn("Failed to clear cart after Khalti Completed pidx {} order {}", pidx, orderId, ce);
+                    }
                 } else if ("User canceled".equalsIgnoreCase(status) || "Expired".equalsIgnoreCase(status)) {
                     payment.setStatus(PaymentStatus.EXPIRED);
                     payment.getOrder().setPaymentStatus(OrderPaymentStatus.EXPIRED);

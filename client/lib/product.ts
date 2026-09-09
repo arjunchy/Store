@@ -23,6 +23,30 @@ type ProductImageResponse = {
   isPrimary: boolean;
 };
 
+const imageCache = new Map<string, { data: ProductImageResponse[]; ts: number }>();
+const IMAGE_CACHE_TTL = 60_000;
+async function fetchImagesCached(pid: string): Promise<ProductImageResponse[]> {
+  const cached = imageCache.get(pid);
+  if (cached && Date.now() - cached.ts < IMAGE_CACHE_TTL) return cached.data;
+  try {
+    const imgs = await apiClient.get<ProductImageResponse[]>(`/products/${pid}/images`, { auth: false });
+    imageCache.set(pid, { data: imgs, ts: Date.now() });
+    return imgs;
+  } catch {
+    return [];
+  }
+}
+async function fetchImagesBatched(pids: string[]): Promise<Map<string, ProductImageResponse[]>> {
+  const result = new Map<string, ProductImageResponse[]>();
+  const chunkSize = 6;
+  for (let i = 0; i < pids.length; i += chunkSize) {
+    const chunk = pids.slice(i, i + chunkSize);
+    const chunkResults = await Promise.all(chunk.map(async (pid) => ({ pid, imgs: await fetchImagesCached(pid) })));
+    chunkResults.forEach(({ pid, imgs }) => result.set(pid, imgs));
+  }
+  return result;
+}
+
 type PageResponse<T> = {
   content: T[];
   totalElements: number;
@@ -79,20 +103,14 @@ function mapProductImage(res: ProductImageResponse): ProductImage {
 
 export async function getProducts(): Promise<Product[]> {
   const page = await apiClient.get<PageResponse<ProductResponse>>("/products", {
-    params: { page: 0, size: 100, sort: "createdAt,desc" },
+    params: { page: 0, size: 20, sort: "createdAt,desc" },
   });
-  const products = await Promise.all(
-    page.content.map(async (p) => {
-      try {
-        const imgs = await apiClient.get<ProductImageResponse[]>(
-          `/products/${p.id}/images`
-        );
-        return mapProduct(p, imgs.map(mapProductImage));
-      } catch {
-        return mapProduct(p);
-      }
-    })
-  );
+  const pids = page.content.map((p) => p.id);
+  const imageMap = await fetchImagesBatched(pids);
+  const products = page.content.map((p) => {
+    const imgs = imageMap.get(p.id) || [];
+    return mapProduct(p, imgs.map(mapProductImage));
+  });
   return products;
 }
 
@@ -148,18 +166,12 @@ export async function listProducts(
     { params }
   );
 
-  const products = await Promise.all(
-    page.content.map(async (p) => {
-      try {
-        const imgs = await apiClient.get<ProductImageResponse[]>(
-          `/products/${p.id}/images`
-        );
-        return mapProduct(p, imgs.map(mapProductImage));
-      } catch {
-        return mapProduct(p);
-      }
-    })
-  );
+  const pids = page.content.map((p) => p.id);
+  const imageMap = await fetchImagesBatched(pids);
+  const products = page.content.map((p) => {
+    const imgs = imageMap.get(p.id) || [];
+    return mapProduct(p, imgs.map(mapProductImage));
+  });
 
   return { data: products, total: page.totalElements };
 }

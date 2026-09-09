@@ -42,9 +42,23 @@ export function useCart() {
           } catch {
           }
         }
-        setCart(await getCart());
+        const serverCart = await getCart();
+        if (serverCart.length === 0) {
+          try {
+            const backupRaw = localStorage.getItem("apexcommerce_cart_backup");
+            const pendingSnapshot = localStorage.getItem("apexcommerce_last_order_snapshot");
+            if (backupRaw && pendingSnapshot) {
+              const backup = JSON.parse(backupRaw);
+              if (Array.isArray(backup) && backup.length > 0) {
+                setCart(serverCart);
+                setLoading(false);
+                return;
+              }
+            }
+          } catch {}
+        }
+        setCart(serverCart);
       } catch {
-        setCart([]);
       } finally {
         setLoading(false);
       }
@@ -143,18 +157,61 @@ export function useCart() {
   }, [removeFromCart]);
 
   const clearCart = useCallback(async () => {
+    const prev = cart;
     try {
       if (authRef.current) {
         await clearServerCart();
+        setCart([]);
       } else {
         clearGuestCart();
+        setCart([]);
       }
-      setCart([]);
-    } catch {
-      try { await refresh(); } catch {}
+    } catch (e) {
+      setCart(prev);
       throw new Error("Failed to clear cart");
     }
-  }, [refresh]);
+  }, [cart]);
+
+  const restoreCart = useCallback(async () => {
+    try {
+      if (authRef.current) {
+        const { apiClient } = await import("@/lib/api-client");
+        try {
+          const backup = (() => {
+            try {
+              const raw = localStorage.getItem("apexcommerce_cart_backup");
+              return raw ? JSON.parse(raw) : null;
+            } catch { return null; }
+          })();
+          if (backup && Array.isArray(backup) && backup.length > 0) {
+            const lastOrderId = localStorage.getItem("apexcommerce_last_order_id") || "";
+            const cleanId = lastOrderId.replace(/^#/, "");
+            if (cleanId) {
+              try {
+                const restored = await apiClient.post<any>(`/cart/restore-from-order/${cleanId}`, {}, { auth: true });
+                if (restored && restored.items) {
+                  setCart(await getCart());
+                  return;
+                }
+              } catch {}
+            }
+            for (const it of backup) {
+              try {
+                await addServerCart({ id: it.product_id || it.id, product_id: it.product_id || it.id, name: it.name, price: it.price, image: it.image, qty: it.qty ?? it.quantity ?? 1, quantity: it.qty ?? it.quantity ?? 1 } as any);
+              } catch {}
+            }
+            setCart(await getCart());
+            return;
+          }
+        } catch {}
+        setCart(await getCart());
+      } else {
+        setCart(getGuestCart());
+      }
+    } catch {
+      try { setCart(getGuestCart()); } catch {}
+    }
+  }, []);
 
   return {
     cart,
@@ -166,5 +223,6 @@ export function useCart() {
     removeFromCart,
     clearCart,
     refresh,
+    restoreCart,
   };
 }

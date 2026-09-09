@@ -34,6 +34,8 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
   const [refreshing, setRefreshing] = useState(false);
   const authRef = useRef(isAuthenticated);
   authRef.current = isAuthenticated;
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
 
   const refresh = useCallback(
     async (force = false): Promise<WishlistItem[]> => {
@@ -48,7 +50,7 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
         setItems(list);
         return list;
       } catch {
-        return items;
+        return itemsRef.current;
       } finally {
         setRefreshing(false);
         setLoading(false);
@@ -118,11 +120,12 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
         err.status = 401;
         throw err;
       }
-      const wasWishlisted = items.some((w) => (w.productId || w.product_id) === productId);
+      const prev = [...itemsRef.current];
+      const wasWishlisted = prev.some((w) => (w.productId || w.product_id) === productId);
       const optimistic: WishlistItem[] = wasWishlisted
-        ? items.filter((w) => (w.productId || w.product_id) !== productId)
+        ? prev.filter((w) => (w.productId || w.product_id) !== productId)
         : [
-            ...items,
+            ...prev,
             {
               id: `optimistic-${productId}`,
               product_id: productId,
@@ -139,11 +142,11 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
         setItems(next);
         return next;
       } catch (e) {
-        setItems(items);
+        setItems(prev);
         throw e;
       }
     },
-    [items]
+    []
   );
 
   const add = useCallback(
@@ -153,8 +156,9 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
         err.status = 401;
         throw err;
       }
-      const already = items.some((w) => (w.productId || w.product_id) === productId);
-      if (already) return items.find((w) => (w.productId || w.product_id) === productId) || null;
+      const current = itemsRef.current;
+      const already = current.some((w) => (w.productId || w.product_id) === productId);
+      if (already) return current.find((w) => (w.productId || w.product_id) === productId) || null;
 
       const optimistic: WishlistItem = {
         id: `optimistic-${productId}`,
@@ -175,23 +179,24 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
         throw e;
       }
     },
-    [items]
+    []
   );
 
   const remove = useCallback(
     async (productId: string) => {
-      const optimistic = items.filter((w) => (w.productId || w.product_id) !== productId);
+      const prev = [...itemsRef.current];
+      const optimistic = prev.filter((w) => (w.productId || w.product_id) !== productId);
       setItems(optimistic);
       try {
         await removeFromWishlistByProductId(productId);
         const fresh = await getWishlist({ force: false }).catch(() => optimistic);
         setItems(fresh);
       } catch (e) {
-        setItems(items);
+        setItems(prev);
         throw e;
       }
     },
-    [items]
+    []
   );
 
   const ids = items.map((w) => w.productId || w.product_id).filter(Boolean) as string[];

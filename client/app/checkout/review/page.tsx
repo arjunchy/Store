@@ -1,7 +1,6 @@
 "use client";
 
 import { formatNPR } from "@/lib/format";
-
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -16,7 +15,8 @@ import {
   getPayment,
   clearCheckout,
 } from "@/lib/checkout";
-import { initiateKhaltiPayment } from "@/lib/payment";
+import { initiateKhaltiPayment, createPayment } from "@/lib/payment";
+import { stashCartBackup, clearCartBackup } from "@/lib/cart-backup";
 import type { ShippingAddress, DeliveryMethod, PaymentMethod } from "@/lib/types";
 
 const formatUSD = formatNPR;
@@ -33,6 +33,8 @@ function ReviewInner() {
   const { cart, subtotal, clearCart, refresh } = useCart();
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState("");
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
+  const [pendingOrderNumber, setPendingOrderNumber] = useState<string | null>(null);
   const [address, setAddress] = useState<ShippingAddress | null>(null);
   const [delivery, setDelivery] = useState<DeliveryMethod>("standard");
   const [payment, setPayment] = useState<PaymentMethod>("esewa");
@@ -75,67 +77,146 @@ function ReviewInner() {
       return;
     }
     setPlacing(true);
+    const cartBackup = [...cart];
     try {
-      const order = await createOrder({
+      stashCartBackup(cartBackup);
+    } catch {}
+    let order: any;
+    try {
+      order = await createOrder({
         addressId: address.id,
         paymentMethod: payment,
         shipping: deliveryCost,
+        shippingMethod: delivery,
+        deliveryMethod: delivery,
         tax,
       });
-
-      // Persist snapshot for order-confirmed page (expects apexcommerce_last_order_snapshot/id)
-      try {
-        const snapshot = {
-          address,
-          delivery,
-          payment,
-          cart: [...cart],
-          subtotal,
-          deliveryCost,
-          tax,
-          total,
-          itemCount,
-          placedAt: new Date().toISOString(),
-          orderId: order.id,
-          orderNumber: (order as any).orderNumber || order.id,
-        };
-        localStorage.setItem("apexcommerce_last_order_snapshot", JSON.stringify(snapshot));
-        localStorage.setItem("apexcommerce_last_order_id", (order as any).orderNumber || order.id);
-      } catch {}
-
-      await clearCheckout().catch(() => {});
-
-      // Ensure frontend cart reflects server clear – remove ordered items (entire cart for clothing branch)
-      try {
-        await clearCart();
-      } catch {
-        try { await refresh(); } catch {}
-      }
-
-      // Khalti ePayment: must redirect to Khalti web – do NOT auto-confirm. Only proceed after real payment.
-      if (payment === "khalti") {
-        try {
-          const khalti = await initiateKhaltiPayment(order.id);
-          const url = (khalti as any).paymentUrl || (khalti as any).payment_url;
-          if (!url) throw new Error("Khalti did not return payment_url – check KHALTI_SECRET_KEY");
-          try { sessionStorage.setItem("khalti_pidx", khalti.pidx); sessionStorage.setItem("khalti_orderId", order.id); } catch {}
-          window.location.href = url; // redirect to https://test-pay.khalti.com/?pidx=...
-          return;
-        } catch (e: any) {
-          const msg = e?.data?.message || e?.message || "Failed to initiate Khalti payment. Please check KHALTI_SECRET_KEY (test-admin.khalti.com live_secret_key) or try again.";
-          setError(msg);
-          setPlacing(false);
-          console.error("Khalti initiate failed – not auto-confirming, order remains UNPAID", e);
-          return;
-        }
-      }
-
-      router.push("/order-confirmed");
     } catch (e: unknown) {
       const msg = (e as any)?.data?.message || (e as Error)?.message || "Failed to place order. Please try again.";
       setError(msg);
       setPlacing(false);
-      console.warn("handlePlaceOrder failed", e);
+      return;
+    }
+
+    try {
+      const snapshot = {
+        address,
+        delivery,
+        payment,
+        cart: cartBackup,
+        subtotal,
+        deliveryCost,
+        tax,
+        total,
+        itemCount,
+        placedAt: new Date().toISOString(),
+        orderId: order.id,
+        orderNumber: (order as any).orderNumber || order.id,
+      };
+      localStorage.setItem("apexcommerce_last_order_snapshot", JSON.stringify(snapshot));
+      localStorage.setItem("apexcommerce_last_order_id", (order as any).orderNumber || order.id);
+      try { sessionStorage.setItem("apexcommerce_pending_order_id", order.id); } catch {}
+      setPendingOrderId(order.id);
+      setPendingOrderNumber((order as any).orderNumber || order.id);
+    } catch {}
+
+    if (payment === "khalti") {
+      try {
+        const khalti = await initiateKhaltiPayment(order.id);
+        const url = (khalti as any).paymentUrl || (khalti as any).payment_url;
+        if (!url) throw new Error("Khalti did not return payment_url – check KHALTI_SECRET_KEY");
+        try { sessionStorage.setItem("khalti_pidx", khalti.pidx); sessionStorage.setItem("khalti_orderId", order.id); } catch {}
+        await clearCheckout().catch(() => {});
+        window.location.href = url;
+        return;
+      } catch (e: any) {
+        const msg = e?.data?.message || e?.message || "Failed to initiate Khalti payment. Order remains UNPAID — cart preserved. Please try again or use eSewa.";
+        setError(msg);
+        setPendingOrderId(order.id);
+        setPlacing(false);
+        return;
+      }
+    }
+
+    try {
+      await createPayment({ orderId: order.id, method: payment, amount: total });
+      await clearCheckout().catch(() => {});
+      try {
+        await clearCart();
+        clearCartBackup();
+        try { sessionStorage.removeItem("apexcommerce_pending_order_id"); } catch {}
+      } catch {}
+      router.push("/order-confirmed");
+    } catch (e: any) {
+      const msg = e?.data?.message || e?.message || "Payment failed — order saved as UNPAID. Cart preserved. Please retry from Orders.";
+      setError(msg);
+      setPendingOrderId(order.id);
+      setPlacing(false);
+    }
+  };
+
+  const handleRestoreCart = async () => {
+    try {
+      const { apiClient } = await import("@/lib/api-client");
+      if (pendingOrderId) {
+        try {
+          await apiClient.post(`/cart/restore-from-order/${pendingOrderId}`, {}, { auth: true });
+          await refresh();
+          router.push("/cart");
+          return;
+        } catch {}
+      }
+      const backupRaw = localStorage.getItem("apexcommerce_cart_backup");
+      if (backupRaw) {
+        const backup = JSON.parse(backupRaw);
+        if (Array.isArray(backup) && backup.length > 0) {
+          for (const it of backup) {
+            try {
+              const { addToCart: addServerCart } = await import("@/lib/cart");
+              await addServerCart({ id: it.product_id || it.id, product_id: it.product_id || it.id, name: it.name, price: it.price, image: it.image, qty: it.qty ?? it.quantity ?? 1, quantity: it.qty ?? it.quantity ?? 1 } as any);
+            } catch {}
+          }
+          await refresh();
+          router.push("/cart");
+          return;
+        }
+      }
+      await refresh();
+      router.push("/cart");
+    } catch {
+      router.push("/cart");
+    }
+  };
+
+  const handleRetryPayment = async () => {
+    if (!pendingOrderId) return;
+    setError("");
+    setPlacing(true);
+    if (payment === "khalti") {
+      try {
+        const khalti = await initiateKhaltiPayment(pendingOrderId);
+        const url = (khalti as any).paymentUrl || (khalti as any).payment_url;
+        if (!url) throw new Error("Khalti did not return payment_url – check KHALTI_SECRET_KEY");
+        try { sessionStorage.setItem("khalti_pidx", khalti.pidx); sessionStorage.setItem("khalti_orderId", pendingOrderId); } catch {}
+        await clearCheckout().catch(() => {});
+        window.location.href = url;
+        return;
+      } catch (e: any) {
+        const msg = e?.data?.message || e?.message || "Failed to initiate Khalti payment. Order remains UNPAID — cart preserved.";
+        setError(msg);
+        setPlacing(false);
+        return;
+      }
+    }
+    try {
+      await createPayment({ orderId: pendingOrderId, method: payment, amount: total });
+      await clearCheckout().catch(() => {});
+      try { await clearCart(); clearCartBackup(); try { sessionStorage.removeItem("apexcommerce_pending_order_id"); } catch {} } catch {}
+      router.push("/order-confirmed");
+    } catch (e: any) {
+      const msg = e?.data?.message || e?.message || "Payment failed — order saved as UNPAID. Cart preserved.";
+      setError(msg);
+      setPlacing(false);
     }
   };
 
@@ -184,18 +265,44 @@ function ReviewInner() {
         </div>
 
         {error && (
-          <div className="max-w-3xl mx-auto mb-6 bg-[#fee2e2]/40 border border-[#fecaca] rounded-xl px-4 py-3 flex items-start gap-2 text-[#b91c1c] text-[13px]">
-            <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5">error</span>
-            <span>{error}</span>
+          <div className="max-w-3xl mx-auto mb-6 bg-[#fee2e2]/40 border border-[#fecaca] rounded-xl px-4 py-3 flex flex-col gap-3 text-[#b91c1c] text-[13px]">
+            <div className="flex items-start gap-2">
+              <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5">error</span>
+              <span>{error}</span>
+            </div>
+            {pendingOrderId && (
+              <div className="flex flex-wrap gap-2 pt-2 border-t border-[#fecaca]/50">
+                <button onClick={handleRetryPayment} disabled={placing} className="px-4 py-2 rounded-full bg-[#b45309] text-white font-semibold text-[12px] hover:bg-[#92400e] disabled:opacity-50 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[14px]">replay</span> Retry Payment
+                </button>
+                <button onClick={handleRestoreCart} className="px-4 py-2 rounded-full border border-[#b45309] text-[#b45309] font-semibold text-[12px] hover:bg-[#fef3c7] flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[14px]">shopping_cart</span> Restore Cart
+                </button>
+                <Link href={pendingOrderId ? `/orders/${pendingOrderId}` : "/orders"} className="px-4 py-2 rounded-full border border-[#d6d3d1] font-semibold text-[12px] bg-white hover:bg-[#fafaf9] text-[#1c1917] flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[14px]">receipt_long</span> View Order {pendingOrderNumber ? `#${String(pendingOrderNumber).slice(0,8).toUpperCase()}` : ""}
+                </Link>
+                <Link href="/cart" className="px-4 py-2 rounded-full border border-[#d6d3d1] font-semibold text-[12px] bg-white hover:bg-[#fafaf9] text-[#1c1917]">Go to Cart</Link>
+              </div>
+            )}
           </div>
         )}
 
-        {(!address || cart.length === 0) && (
+        {(!address || cart.length === 0) && !error && (
           <div className="max-w-3xl mx-auto mb-6 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-2 text-amber-800 text-[13px]">
             <span className="material-symbols-outlined text-[18px] shrink-0">warning</span>
             <div>
               {!address && <p>• No shipping address selected — <Link href="/checkout/shipping" className="underline font-semibold">choose address</Link></p>}
               {cart.length === 0 && <p>• Your cart is empty — <Link href="/catalog" className="underline font-semibold">browse products</Link></p>}
+            </div>
+          </div>
+        )}
+
+        {pendingOrderId && error && cart.length === 0 && (
+          <div className="max-w-3xl mx-auto mb-6 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-2 text-amber-800 text-[13px]">
+            <span className="material-symbols-outlined text-[18px] shrink-0">info</span>
+            <div>
+              <p className="font-semibold">Your cart is still saved.</p>
+              <p>Payment did not complete — your items are preserved. Use Restore Cart or Retry Payment above.</p>
             </div>
           </div>
         )}
@@ -301,9 +408,16 @@ function ReviewInner() {
                   </div>
                   <p className="text-[14px] font-medium text-[#1c1917]">Your cart is empty</p>
                   <p className="text-[12px] text-[#57534e]">Add products to place an order.</p>
-                  <Link href="/catalog" className="mt-1 inline-flex bg-[#b45309] text-white px-5 py-2.5 rounded-full text-[13px] font-semibold hover:bg-[#92400e]">
-                    Browse products
-                  </Link>
+                  {pendingOrderId && (
+                    <button onClick={handleRestoreCart} className="mt-1 inline-flex bg-[#b45309] text-white px-5 py-2.5 rounded-full text-[13px] font-semibold hover:bg-[#92400e]">
+                      Restore Cart
+                    </button>
+                  )}
+                  {!pendingOrderId && (
+                    <Link href="/catalog" className="mt-1 inline-flex bg-[#b45309] text-white px-5 py-2.5 rounded-full text-[13px] font-semibold hover:bg-[#92400e]">
+                      Browse products
+                    </Link>
+                  )}
                 </div>
               ) : (
                 <div className="divide-y divide-[#d6d3d1]/50">

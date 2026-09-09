@@ -95,12 +95,10 @@ public class OrderServiceImpl implements OrderService {
             }
 
             String shippingAddressJson = convertAddressToJson(address);
-            String orderNumber = generateOrderNumber();
-            log.debug("Generated orderNumber: {} for userId: {}", orderNumber, userId);
 
             Order order = Order.builder()
                     .user(user)
-                    .orderNumber(orderNumber)
+                    .orderNumber("TMP-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
                     .totalAmount(BigDecimal.ZERO)
                     .subtotal(BigDecimal.ZERO)
                     .shippingCost(BigDecimal.ZERO)
@@ -112,8 +110,8 @@ public class OrderServiceImpl implements OrderService {
                     .shippingAddress(shippingAddressJson)
                     .build();
 
-            Order savedOrder = orderRepository.save(order);
-            log.info("Created order with id: {} and orderNumber: {} for userId: {}", savedOrder.getId(), orderNumber, userId);
+            Order savedOrder = saveOrderWithRetry(order);
+            log.info("Created order with id: {} and orderNumber: {} for userId: {}", savedOrder.getId(), savedOrder.getOrderNumber(), userId);
 
             BigDecimal total = BigDecimal.ZERO;
             for (CartItem cartItem : cart.getCartItems()) {
@@ -161,15 +159,23 @@ public class OrderServiceImpl implements OrderService {
             BigDecimal tax = subtotalAmount.multiply(new BigDecimal("0.08"))
                     .setScale(2, java.math.RoundingMode.HALF_UP);
 
-            // Shipping is derived from the known rate table (express = 15, else 0).
-            // The client may only select an allowed rate; anything else defaults to 15,
-            // preventing arbitrary shipping inflation/waiving by the client.
+            // Shipping derived strictly from allowed method, not arbitrary client amount.
             BigDecimal shipping;
-            if (request.shipping() != null
-                    && !request.shipping().equals(BigDecimal.ZERO)) {
-                shipping = new BigDecimal("15.00");
+            String methodRaw = request.shippingMethod() != null ? request.shippingMethod() : request.deliveryMethod();
+            if (methodRaw != null && !methodRaw.isBlank()) {
+                String m = methodRaw.trim().toLowerCase();
+                if ("express".equals(m)) shipping = new BigDecimal("15.00");
+                else if ("standard".equals(m)) shipping = BigDecimal.ZERO;
+                else throw new IllegalArgumentException("Invalid shipping method: must be standard or express");
             } else {
-                shipping = BigDecimal.ZERO;
+                // Legacy fallback: strict validation of BigDecimal to prevent arbitrary inflation/waiving
+                if (request.shipping() == null || request.shipping().compareTo(BigDecimal.ZERO) == 0) {
+                    shipping = BigDecimal.ZERO;
+                } else if (request.shipping().compareTo(new BigDecimal("15")) == 0 || request.shipping().compareTo(new BigDecimal("15.00")) == 0) {
+                    shipping = new BigDecimal("15.00");
+                } else {
+                    throw new IllegalArgumentException("Invalid shipping amount: must be 0 or 15");
+                }
             }
 
             BigDecimal grandTotal = subtotalAmount.add(shipping).add(tax);
@@ -195,9 +201,7 @@ public class OrderServiceImpl implements OrderService {
                 throw e;
             }
 
-            cart.getCartItems().clear();
-            cartRepository.save(cart);
-            log.info("Cleared cart for userId: {} after order placement", userId);
+            log.info("Order {} placed for userId: {} — cart preserved until payment confirmed", savedOrder.getId(), userId);
 
             return toOrderResponse(savedOrder);
 
@@ -407,6 +411,19 @@ public class OrderServiceImpl implements OrderService {
         return "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
     }
 
+    private Order saveOrderWithRetry(Order order) {
+        for (int i = 0; i < 3; i++) {
+            try {
+                order.setOrderNumber(generateOrderNumber());
+                return orderRepository.save(order);
+            } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                if (i == 2) throw e;
+                log.warn("Order number collision, retrying {}/3", i + 1);
+            }
+        }
+        throw new IllegalStateException("Failed to generate unique order number");
+    }
+
     private String convertAddressToJson(Address address) {
         try {
             Map<String, Object> map = new HashMap<>();
@@ -559,7 +576,7 @@ public class OrderServiceImpl implements OrderService {
             try {
                 Product p = oi.getProduct();
                 if (p == null) continue;
-                Product fresh = productRepository.findById(p.getId()).orElse(null);
+                Product fresh = productRepository.findByIdForUpdate(p.getId()).orElseGet(() -> productRepository.findById(p.getId()).orElse(null));
                 if (fresh == null) continue;
                 int current = fresh.getStockQuantity() != null ? fresh.getStockQuantity() : 0;
                 int restore = oi.getQuantity() != null ? oi.getQuantity() : 0;
@@ -625,7 +642,7 @@ public class OrderServiceImpl implements OrderService {
                     try {
                         Product p = oi.getProduct();
                         if (p != null) {
-                            Product fresh = productRepository.findById(p.getId()).orElse(null);
+                            Product fresh = productRepository.findByIdForUpdate(p.getId()).orElseGet(() -> productRepository.findById(p.getId()).orElse(null));
                             if (fresh != null) {
                                 int current = fresh.getStockQuantity() != null ? fresh.getStockQuantity() : 0;
                                 int restore = oi.getQuantity() != null ? oi.getQuantity() : 0;

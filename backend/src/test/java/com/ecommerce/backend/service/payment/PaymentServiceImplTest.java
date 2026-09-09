@@ -37,6 +37,7 @@ class PaymentServiceImplTest {
     @Mock private OrderRepository orderRepository;
     @Mock private PaymentGatewayFactory paymentGatewayFactory;
     @Mock private PaymentMapper paymentMapper;
+    @Mock private com.ecommerce.backend.repository.CartRepository cartRepository;
 
     @InjectMocks
     private PaymentServiceImpl paymentService;
@@ -55,11 +56,12 @@ class PaymentServiceImplTest {
     @Test
     void processPayment_success() {
         PaymentRequest request = new PaymentRequest("ord-1", "SIMULATED", new BigDecimal("200.00"));
-        when(orderRepository.findById("ord-1")).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate("ord-1")).thenReturn(Optional.of(order));
         when(paymentGatewayFactory.getGateway(PaymentMethod.SIMULATED)).thenReturn(gateway);
         when(gateway.processPayment(request)).thenReturn(PaymentResult.builder().success(true).transactionId("TXN-123").build());
         when(paymentRepository.save(any(Payment.class))).thenReturn(mock(Payment.class));
         when(orderRepository.save(any())).thenReturn(order);
+        when(cartRepository.findByUserId("user-1")).thenReturn(Optional.empty());
         when(paymentMapper.toResponse(any())).thenReturn(
                 new PaymentResponse("pay-1", "ord-1", new BigDecimal("200.00"), "SIMULATED", "TXN-123", "COMPLETED", LocalDateTime.now())
         );
@@ -75,7 +77,7 @@ class PaymentServiceImplTest {
     @Test
     void processPayment_gatewayFailure_setsFailedStatus() {
         PaymentRequest request = new PaymentRequest("ord-1", "SIMULATED", new BigDecimal("200.00"));
-        when(orderRepository.findById("ord-1")).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate("ord-1")).thenReturn(Optional.of(order));
         when(paymentGatewayFactory.getGateway(PaymentMethod.SIMULATED)).thenReturn(gateway);
         when(gateway.processPayment(request)).thenReturn(PaymentResult.builder().success(false).errorMessage("Card declined").build());
         when(paymentRepository.save(any())).thenReturn(mock(Payment.class));
@@ -89,12 +91,12 @@ class PaymentServiceImplTest {
         assertThat(response.status()).isEqualTo("FAILED");
         ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
         verify(orderRepository).save(captor.capture());
-        assertThat(captor.getValue().getPaymentStatus()).isEqualTo(OrderPaymentStatus.FAILED);
+        assertThat(captor.getValue().getPaymentStatus()).isEqualTo(OrderPaymentStatus.EXPIRED);
     }
 
     @Test
     void processPayment_orderNotFound_throws() {
-        when(orderRepository.findById("missing")).thenReturn(Optional.empty());
+        when(orderRepository.findByIdForUpdate("missing")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> paymentService.processPayment(new PaymentRequest("missing", "SIMULATED", BigDecimal.TEN), "user-1"))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -105,7 +107,7 @@ class PaymentServiceImplTest {
     void processPayment_wrongOwner_throws() {
         User otherUser = User.builder().userId("user-2").build();
         Order otherOrder = Order.builder().id("ord-2").user(otherUser).build();
-        when(orderRepository.findById("ord-2")).thenReturn(Optional.of(otherOrder));
+        when(orderRepository.findByIdForUpdate("ord-2")).thenReturn(Optional.of(otherOrder));
 
         assertThatThrownBy(() -> paymentService.processPayment(new PaymentRequest("ord-2", "SIMULATED", BigDecimal.TEN), "user-1"))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -114,7 +116,7 @@ class PaymentServiceImplTest {
     @Test
     void processPayment_alreadyPaid_throws() {
         order.setPaymentStatus(OrderPaymentStatus.PAID);
-        when(orderRepository.findById("ord-1")).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate("ord-1")).thenReturn(Optional.of(order));
 
         assertThatThrownBy(() -> paymentService.processPayment(new PaymentRequest("ord-1", "SIMULATED", BigDecimal.TEN), "user-1"))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -123,7 +125,7 @@ class PaymentServiceImplTest {
 
     @Test
     void processPayment_invalidMethod_throws() {
-        when(orderRepository.findById("ord-1")).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate("ord-1")).thenReturn(Optional.of(order));
 
         assertThatThrownBy(() -> paymentService.processPayment(new PaymentRequest("ord-1", "BITCOIN", BigDecimal.TEN), "user-1"))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -133,11 +135,12 @@ class PaymentServiceImplTest {
     @Test
     void processPayment_nullAmount_usesOrderTotal() {
         PaymentRequest request = new PaymentRequest("ord-1", "SIMULATED", null);
-        when(orderRepository.findById("ord-1")).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate("ord-1")).thenReturn(Optional.of(order));
         when(paymentGatewayFactory.getGateway(PaymentMethod.SIMULATED)).thenReturn(gateway);
         when(gateway.processPayment(any())).thenReturn(PaymentResult.builder().success(true).transactionId("TXN-123").build());
         when(paymentRepository.save(any())).thenReturn(mock(Payment.class));
         when(orderRepository.save(any())).thenReturn(order);
+        when(cartRepository.findByUserId("user-1")).thenReturn(Optional.empty());
         when(paymentMapper.toResponse(any())).thenReturn(
                 new PaymentResponse("pay-1", "ord-1", new BigDecimal("200.00"), "SIMULATED", "TXN-123", "COMPLETED", LocalDateTime.now())
         );

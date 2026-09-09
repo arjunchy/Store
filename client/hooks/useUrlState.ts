@@ -1,12 +1,13 @@
 "use client";
 import { useMemo, useCallback, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 
 export function useUrlState<T extends Record<string, string>>(
   initialState: T
 ): [T, (updates: Partial<T>) => void] {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const searchParamsRef = useRef(searchParams);
   searchParamsRef.current = searchParams;
 
@@ -25,8 +26,10 @@ export function useUrlState<T extends Record<string, string>>(
       if (value !== undefined && value !== null && value !== "") params.set(key, value as string);
       else params.delete(key);
     });
-    router.replace(`?${params.toString()}` as any);
-  }, [router]);
+    const qs = params.toString();
+    const target = qs ? `${pathname}?${qs}` : pathname;
+    router.replace(target as any);
+  }, [router, pathname]);
 
   return [state, setState];
 }
