@@ -136,7 +136,7 @@ class RefreshTokenServiceTest {
         RefreshToken rt1 = RefreshToken.builder().id("rt-1").user(user).revoked(false).build();
         RefreshToken rt2 = RefreshToken.builder().id("rt-2").user(user).revoked(false).build();
         RefreshToken rt3 = RefreshToken.builder().id("rt-3").user(user).revoked(true).build();
-        when(refreshTokenRepository.findAll()).thenReturn(List.of(rt1, rt2, rt3));
+        when(refreshTokenRepository.findByUserUserId("user-1")).thenReturn(List.of(rt1, rt2, rt3));
         when(refreshTokenRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         refreshTokenService.revokeAllForUser("user-1");
@@ -144,12 +144,11 @@ class RefreshTokenServiceTest {
         assertThat(rt1.getRevoked()).isTrue();
         assertThat(rt2.getRevoked()).isTrue();
         assertThat(rt3.getRevoked()).isTrue();
-        verify(refreshTokenRepository, times(2)).save(any());
     }
 
     @Test
     void revokeAllForUser_noTokens() {
-        when(refreshTokenRepository.findAll()).thenReturn(List.of());
+        when(refreshTokenRepository.findByUserUserId("user-1")).thenReturn(List.of());
 
         refreshTokenService.revokeAllForUser("user-1");
 

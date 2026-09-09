@@ -114,14 +114,15 @@ class AdminControllerTest {
 
     @Test
     void getAllOrders_success_returns200() {
-        var order = com.ecommerce.backend.entity.Order.builder().id("order-1").orderNumber("ORD-123").totalAmount(new BigDecimal("1000")).status(OrderStatus.PENDING).build();
-        Page<com.ecommerce.backend.entity.Order> page = new PageImpl<>(List.of(order));
+        var order = com.ecommerce.backend.entity.Order.builder().id("order-1").orderNumber("ORD-123").totalAmount(new BigDecimal("1000")).status(OrderStatus.PROCESSING).build();
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 10);
+        Page<com.ecommerce.backend.entity.Order> page = new PageImpl<>(List.of(order), pageable, 1);
         when(orderRepository.findAll(any(Pageable.class))).thenReturn(page);
         when(orderItemRepository.findByOrderIdWithProduct("order-1")).thenReturn(List.of());
-        OrderResponse or = new OrderResponse("order-1", "ORD-123", new BigDecimal("1000"), OrderStatus.PENDING, null, DeliveryStatus.PLACED, List.of(), LocalDateTime.now(), null, null, null);
+        OrderResponse or = new OrderResponse("order-1", "ORD-123", new BigDecimal("1000"), OrderStatus.PROCESSING, null, DeliveryStatus.PLACED, List.of(), LocalDateTime.now(), null, null, null);
         when(orderMapper.toOrderResponse(eq(order), anyList())).thenReturn(or);
 
-        var resp = adminController.getAllOrders(Pageable.unpaged());
+        var resp = adminController.getAllOrders(pageable);
         assertThat(resp.getBody().getTotalElements()).isEqualTo(1);
         assertThat(resp.getBody().getContent().get(0).id()).isEqualTo("order-1");
     }

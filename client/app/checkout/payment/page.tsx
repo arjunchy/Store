@@ -22,25 +22,25 @@ const WALLET_OPTIONS: {
   brandBg: string;
   logo: string;
 }[] = [
-  {
-    id: "esewa",
-    label: "eSewa",
-    sub: "Pay with eSewa wallet",
-    badge: "Popular in Nepal",
-    brandColor: "#1AA16B",
-    brandBg: "#e6f6ee",
-    logo: "account_balance_wallet",
-  },
-  {
-    id: "khalti",
-    label: "Khalti",
-    sub: "Pay with Khalti wallet",
-    badge: "Fast & Secure",
-    brandColor: "#5C2D91",
-    brandBg: "#f3e8ff",
-    logo: "wallet",
-  },
-];
+    {
+      id: "esewa",
+      label: "eSewa",
+      sub: "Pay with eSewa wallet",
+      badge: "Popular in Nepal",
+      brandColor: "#1AA16B",
+      brandBg: "#e6f6ee",
+      logo: "account_balance_wallet",
+    },
+    {
+      id: "khalti",
+      label: "Khalti",
+      sub: "Pay with Khalti wallet",
+      badge: "Fast & Secure",
+      brandColor: "#5C2D91",
+      brandBg: "#f3e8ff",
+      logo: "wallet",
+    },
+  ];
 
 export default function PaymentMethodPage() {
   return (
@@ -185,11 +185,10 @@ function PaymentInner() {
                   key={w.id}
                   onClick={() => handleSelect(w.id)}
                   aria-pressed={active}
-                  className={`relative text-left rounded-[16px] p-5 flex flex-col gap-3 border-2 transition-all group ${
-                    active
+                  className={`relative text-left rounded-[16px] p-5 flex flex-col gap-3 border-2 transition-all group ${active
                       ? "border-[#b45309] bg-[#fafaf9] shadow-[0px_4px_6px_-1px_rgba(0,0,0,0.1)]"
                       : "border-[#d6d3d1] bg-white hover:border-[#b45309]/50 hover:shadow-sm hover:-translate-y-[1px]"
-                  }`}
+                    }`}
                 >
                   <div className="absolute top-4 right-4">
                     <div
@@ -252,16 +251,15 @@ function PaymentInner() {
               </span>
             </div>
 
-            <div className="mt-4 rounded-xl bg-[#fafaf9] p-4 border border-dashed border-[#d6d3d1]">
-              <p className="text-[12px] font-semibold text-[#1c1917] mb-1">Payment flow (SIMULATED)</p>
+            {/* <div className="mt-4 rounded-xl bg-[#fafaf9] p-4 border border-dashed border-[#d6d3d1]">
+              <p className="text-[12px] font-semibold text-[#1c1917] mb-1">Payment flow (no COD – prepaid only)</p>
               <p className="text-[12px] leading-relaxed text-[#57534e]">
-                On <span className="font-medium text-[#1c1917]">Place Order</span>, ApexCommerce creates the order then automatically calls
-                <code className="mx-1 px-1.5 py-0.5 rounded bg-[#fafaf9] text-[11px]">POST /api/payments</code>
-                with <code className="px-1 py-0.5 rounded bg-[#fafaf9] text-[11px]">{"{ orderId, method, amount }"}</code>.
-                The simulated gateway approves instantly and returns a transactionId, setting the order `payment_status=PAID`
-                (auto-CONFIRMED). Payment history is available via
-                <code className="mx-1 px-1 py-0.5 rounded bg-[#fafaf9] text-[11px]">GET /api/payments/order/{"{orderId}"}</code>.
-                No redirect is required — the gateway is stubbed until real eSewa/Khalti keys are configured.
+                On <span className="font-medium text-[#1c1917]">Place Order</span>, ApexCommerce creates the order as
+                <code className="mx-1 px-1.5 py-0.5 rounded bg-[#fafaf9] text-[11px]">UNPAID</code>
+                then redirects you to <span className="font-medium text-[#1c1917]">eSewa / Khalti</span> to authorize.
+                After success, the callback verifies server-side and the order auto-marks
+                <code className="mx-1 px-1 py-0.5 rounded bg-[#fafaf9] text-[11px]">PAID</code>
+                (auto-CONFIRMED) – no manual admin step needed.
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#fafaf9] text-[11px] font-medium text-[#57534e]">
@@ -269,7 +267,7 @@ function PaymentInner() {
                 </span>
                 <span className="text-[11px] text-[#57534e]">No card data collected — wallets handle PCI.</span>
               </div>
-            </div>
+            </div> */}
 
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
               {[
@@ -323,7 +321,7 @@ function PaymentInner() {
                     <div key={item.id} className="flex gap-4">
                       <div className="w-16 h-16 bg-[#fafaf9] rounded-lg overflow-hidden shrink-0 relative flex items-center justify-center">
                         {item.image ? (
-                          <Image src={item.image} alt={item.name} fill unoptimized className="object-cover" sizes="64px" onError={(e) => {(e.target as HTMLImageElement).style.display = "none";}} />
+                          <Image src={item.image} alt={item.name} fill unoptimized className="object-cover" sizes="64px" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                         ) : (
                           <span className="material-symbols-outlined text-[#a8a29e] text-[24px]">image</span>
                         )}

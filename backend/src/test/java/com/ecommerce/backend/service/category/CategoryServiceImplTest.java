@@ -5,6 +5,7 @@ import com.ecommerce.backend.dto.response.CategoryResponse;
 import com.ecommerce.backend.entity.Category;
 import com.ecommerce.backend.mapper.CategoryMapper;
 import com.ecommerce.backend.repository.CategoryRepository;
+import com.ecommerce.backend.repository.ProductRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,6 +27,9 @@ class CategoryServiceImplTest {
 
     @Mock
     private CategoryRepository categoryRepository;
+
+    @Mock
+    private ProductRepository productRepository;
 
     @Mock
     private CategoryMapper categoryMapper;
@@ -265,7 +269,7 @@ class CategoryServiceImplTest {
         CategoryResponse result = categoryService.update("child-1", req);
 
         assertThat(result.parentId()).isEqualTo("parent-2");
-        verify(categoryRepository).findById("parent-2");
+        verify(categoryRepository, atLeastOnce()).findById("parent-2");
         verify(categoryRepository).save(argThat(c -> c.getParent() != null && c.getParent().getId().equals("parent-2")));
     }
 
@@ -324,33 +328,37 @@ class CategoryServiceImplTest {
 
     @Test
     void delete_success() {
-        when(categoryRepository.existsById("cat-1")).thenReturn(true);
-        doNothing().when(categoryRepository).deleteById("cat-1");
+        Category cat = Category.builder().id("cat-1").name("ToDelete").build();
+        when(categoryRepository.findById("cat-1")).thenReturn(Optional.of(cat));
+        when(categoryRepository.findByParent(cat)).thenReturn(List.of());
+        when(productRepository.findAllByCategoryId("cat-1")).thenReturn(List.of());
 
         categoryService.delete("cat-1");
 
-        verify(categoryRepository).existsById("cat-1");
-        verify(categoryRepository).deleteById("cat-1");
+        verify(categoryRepository).findById("cat-1");
+        verify(categoryRepository).delete(cat);
     }
 
     @Test
     void delete_notFound_throws() {
-        when(categoryRepository.existsById("missing")).thenReturn(false);
+        when(categoryRepository.findById("missing")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> categoryService.delete("missing"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Category not found");
 
-        verify(categoryRepository, never()).deleteById(anyString());
+        verify(categoryRepository, never()).delete(any());
     }
 
     @Test
     void delete_existing_thenVerifyHardDelete() {
-        when(categoryRepository.existsById("parent-1")).thenReturn(true);
-        doNothing().when(categoryRepository).deleteById("parent-1");
+        Category cat = Category.builder().id("parent-1").name("Parent").build();
+        when(categoryRepository.findById("parent-1")).thenReturn(Optional.of(cat));
+        when(categoryRepository.findByParent(cat)).thenReturn(List.of());
+        when(productRepository.findAllByCategoryId("parent-1")).thenReturn(List.of());
 
         categoryService.delete("parent-1");
 
-        verify(categoryRepository).deleteById("parent-1");
+        verify(categoryRepository).delete(cat);
     }
 }

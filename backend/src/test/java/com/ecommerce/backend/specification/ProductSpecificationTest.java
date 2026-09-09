@@ -51,13 +51,13 @@ class ProductSpecificationTest {
         jakarta.persistence.criteria.Predicate truePred = mock(jakarta.persistence.criteria.Predicate.class);
         when(root.get("name")).thenReturn(namePath);
         when(cb.lower(namePath)).thenReturn(lowerPred);
-        when(cb.like(lowerPred, "%laptop%")).thenReturn(likePred);
+        when(cb.like(lowerPred, "%laptop%", '\\')).thenReturn(likePred);
         when(cb.and(any(jakarta.persistence.criteria.Predicate[].class))).thenReturn(truePred);
 
         var spec = productSpecification.buildSearchSpecification("Laptop", null, null, null, null, null);
         spec.toPredicate(root, query, cb);
 
-        verify(cb).like(lowerPred, "%laptop%");
+        verify(cb).like(lowerPred, "%laptop%", '\\');
     }
 
     @Test
@@ -164,7 +164,7 @@ class ProductSpecificationTest {
         when(root.get("isNewArrival")).thenReturn(isNewArrivalPath);
         when(root.get("rating")).thenReturn(ratingPath);
         when(cb.lower(namePath)).thenReturn(namePath);
-        when(cb.like(namePath, "%phone%")).thenReturn(mock(jakarta.persistence.criteria.Predicate.class));
+        when(cb.like(namePath, "%phone%", '\\')).thenReturn(mock(jakarta.persistence.criteria.Predicate.class));
         when(cb.equal(categoryIdPath, "cat-1")).thenReturn(mock(jakarta.persistence.criteria.Predicate.class));
         when(cb.greaterThanOrEqualTo(pricePath, new BigDecimal("50"))).thenReturn(mock(jakarta.persistence.criteria.Predicate.class));
         when(cb.lessThanOrEqualTo(pricePath, new BigDecimal("200"))).thenReturn(mock(jakarta.persistence.criteria.Predicate.class));

@@ -106,6 +106,7 @@ public class SecurityConfig {
                                 .requestMatchers(HttpMethod.GET, "/api/products/**").permitAll()
                                 .requestMatchers(HttpMethod.GET, "/api/products").permitAll()
                                 .requestMatchers("/uploads/**").permitAll()
+                                .requestMatchers("/api/payments/khalti/callback").permitAll()
                                 .anyRequest()
                                 .authenticated();
                         }

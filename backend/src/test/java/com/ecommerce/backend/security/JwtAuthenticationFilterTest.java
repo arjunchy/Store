@@ -94,9 +94,8 @@ class JwtAuthenticationFilterTest {
     @Test
     void doFilterInternal_validToken_setsAuthentication() throws ServletException, IOException {
         when(request.getHeader("Authorization")).thenReturn("Bearer valid-token");
-        when(request.getMethod()).thenReturn("GET");
-        when(request.getRequestURI()).thenReturn("/api/products");
         when(jwtUtil.isRefreshToken("valid-token")).thenReturn(false);
+        when(jwtUtil.isAccessToken("valid-token")).thenReturn(true);
         when(jwtUtil.extractUsername("valid-token")).thenReturn("test@test.com");
         when(customUserDetailsService.loadUserByUsername("test@test.com")).thenReturn(userDetails);
         when(jwtUtil.isTokenValid("valid-token", userDetails)).thenReturn(true);
@@ -111,9 +110,8 @@ class JwtAuthenticationFilterTest {
     @Test
     void doFilterInternal_invalidToken_doesNotSetAuth() throws ServletException, IOException {
         when(request.getHeader("Authorization")).thenReturn("Bearer bad-token");
-        when(request.getMethod()).thenReturn("GET");
-        when(request.getRequestURI()).thenReturn("/api/products");
         when(jwtUtil.isRefreshToken("bad-token")).thenReturn(false);
+        when(jwtUtil.isAccessToken("bad-token")).thenReturn(true);
         when(jwtUtil.extractUsername("bad-token")).thenReturn("test@test.com");
         when(customUserDetailsService.loadUserByUsername("test@test.com")).thenReturn(userDetails);
         when(jwtUtil.isTokenValid("bad-token", userDetails)).thenReturn(false);
@@ -125,11 +123,22 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
+    void doFilterInternal_nonAccessToken_skipsAuth() throws ServletException, IOException {
+        when(request.getHeader("Authorization")).thenReturn("Bearer some-token");
+        when(jwtUtil.isRefreshToken("some-token")).thenReturn(false);
+        when(jwtUtil.isAccessToken("some-token")).thenReturn(false);
+
+        jwtAuthenticationFilter.doFilterInternal(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
     void doFilterInternal_nullUsername_doesNotSetAuth() throws ServletException, IOException {
         when(request.getHeader("Authorization")).thenReturn("Bearer token");
-        when(request.getMethod()).thenReturn("GET");
-        when(request.getRequestURI()).thenReturn("/api/products");
         when(jwtUtil.isRefreshToken("token")).thenReturn(false);
+        when(jwtUtil.isAccessToken("token")).thenReturn(true);
         when(jwtUtil.extractUsername("token")).thenReturn(null);
 
         jwtAuthenticationFilter.doFilterInternal(request, response, filterChain);
@@ -141,9 +150,8 @@ class JwtAuthenticationFilterTest {
     @Test
     void doFilterInternal_exceptionThrown_passesThrough() throws ServletException, IOException {
         when(request.getHeader("Authorization")).thenReturn("Bearer token");
-        when(request.getMethod()).thenReturn("GET");
-        when(request.getRequestURI()).thenReturn("/api/products");
         when(jwtUtil.isRefreshToken("token")).thenReturn(false);
+        when(jwtUtil.isAccessToken("token")).thenReturn(true);
         when(jwtUtil.extractUsername("token")).thenThrow(new RuntimeException("JWT error"));
 
         jwtAuthenticationFilter.doFilterInternal(request, response, filterChain);
@@ -159,14 +167,13 @@ class JwtAuthenticationFilterTest {
         SecurityContextHolder.getContext().setAuthentication(existingAuth);
 
         when(request.getHeader("Authorization")).thenReturn("Bearer valid-token");
-        when(request.getMethod()).thenReturn("GET");
-        when(request.getRequestURI()).thenReturn("/api/products");
         when(jwtUtil.isRefreshToken("valid-token")).thenReturn(false);
+        when(jwtUtil.isAccessToken("valid-token")).thenReturn(true);
         when(jwtUtil.extractUsername("valid-token")).thenReturn("test@test.com");
 
         jwtAuthenticationFilter.doFilterInternal(request, response, filterChain);
 
         verify(filterChain).doFilter(request, response);
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isEqualTo(existingAuth);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
     }
 }

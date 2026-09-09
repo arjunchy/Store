@@ -99,3 +99,79 @@ export async function lookupKhalti(pidx: string): Promise<{ pidx: string; status
   );
   return res;
 }
+
+export type EsewaInitiateResponse = {
+  gatewayUrl: string;
+  productCode: string;
+  transactionUuid: string;
+  totalAmount: string;
+  amount: string;
+  taxAmount: string;
+  productServiceCharge: string;
+  productDeliveryCharge: string;
+  successUrl: string;
+  failureUrl: string;
+  signedFieldNames: string;
+  signature: string;
+  orderId: string;
+  orderNumber: string;
+};
+
+export async function initiateEsewaPayment(orderId: string): Promise<EsewaInitiateResponse> {
+  const res = await apiClient.post<any>(
+    "/payments/esewa/initiate",
+    { orderId },
+    { auth: true }
+  );
+  return res as EsewaInitiateResponse;
+}
+
+export async function verifyEsewaPayment(params: {
+  data?: string;
+  transactionUuid?: string;
+  transactionCode?: string;
+  totalAmount?: string;
+}): Promise<any> {
+  const res = await apiClient.post<any>(
+    "/payments/esewa/verify",
+    {
+      data: params.data,
+      transactionUuid: params.transactionUuid,
+      transactionCode: params.transactionCode,
+      totalAmount: params.totalAmount,
+    },
+    { auth: true }
+  );
+  return res;
+}
+
+/**
+ * eSewa requires a form-POST (not a GET redirect). Build and auto-submit it.
+ */
+export function submitEsewaForm(init: EsewaInitiateResponse): void {
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = init.gatewayUrl;
+  const fields: Record<string, string> = {
+    amount: init.amount,
+    tax_amount: init.taxAmount,
+    total_amount: init.totalAmount,
+    transaction_uuid: init.transactionUuid,
+    product_code: init.productCode,
+    product_service_charge: init.productServiceCharge,
+    product_delivery_charge: init.productDeliveryCharge,
+    success_url: init.successUrl,
+    failure_url: init.failureUrl,
+    signed_field_names: init.signedFieldNames,
+    signature: init.signature,
+  };
+  for (const [k, v] of Object.entries(fields)) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = k;
+    input.value = v ?? "";
+    form.appendChild(input);
+  }
+  document.body.appendChild(form);
+  form.submit();
+}

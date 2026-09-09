@@ -61,7 +61,7 @@ class AdminServiceTest {
     void setUp() {
         user = User.builder().userId("user-1").username("john").email("john@example.com").userRole(UserRole.USER).createdAt(LocalDateTime.now()).build();
         product = Product.builder().id("prod-1").name("Laptop").price(new BigDecimal("1000")).stockQuantity(5).rating(4.5f).build();
-        order = Order.builder().id("order-1").orderNumber("ORD-123").totalAmount(new BigDecimal("1000")).status(OrderStatus.PENDING).createdAt(LocalDateTime.now()).build();
+        order = Order.builder().id("order-1").orderNumber("ORD-123").totalAmount(new BigDecimal("1000")).status(OrderStatus.PROCESSING).createdAt(LocalDateTime.now()).build();
     }
 
     @Test
@@ -70,10 +70,10 @@ class AdminServiceTest {
         when(productRepository.count()).thenReturn(20L);
         when(orderRepository.count()).thenReturn(30L);
         when(orderRepository.sumTotalRevenue()).thenReturn(new BigDecimal("50000.00"));
-        when(orderRepository.countByStatus(OrderStatus.PENDING)).thenReturn(5L);
+        when(orderRepository.countByStatus(OrderStatus.PROCESSING)).thenReturn(5L);
         when(productRepository.countByStockQuantity(0)).thenReturn(3L);
 
-        OrderResponse orderResp = new OrderResponse("order-1", "ORD-123", new BigDecimal("1000"), OrderStatus.PENDING, null, DeliveryStatus.PLACED, List.of(), LocalDateTime.now(), null, null, null);
+        OrderResponse orderResp = new OrderResponse("order-1", "ORD-123", new BigDecimal("1000"), OrderStatus.PROCESSING, null, DeliveryStatus.PLACED, List.of(), LocalDateTime.now(), null, null, null);
         UserResponse userResp = new UserResponse("user-1", "john", "john@example.com", UserRole.USER, LocalDateTime.now());
 
         // Mock recent orders and users via repository calls
@@ -116,8 +116,8 @@ class AdminServiceTest {
             when(orderRepository.countByStatus(status)).thenReturn(2L);
         }
         Map<String, Long> stats = adminService.getOrderStats();
-        assertThat(stats).hasSize(OrderStatus.values().length);
-        assertThat(stats.get("PENDING")).isEqualTo(2L);
+        assertThat(stats).hasSize(6);
+        assertThat(stats.get("PROCESSING")).isEqualTo(2L);
     }
 
     @Test
@@ -127,7 +127,7 @@ class AdminServiceTest {
         }
         when(orderRepository.sumTotalRevenue()).thenReturn(new BigDecimal("5000"));
         Map<String, BigDecimal> stats = adminService.getRevenueStats();
-        assertThat(stats).containsKey("PENDING");
+        assertThat(stats).containsKey("PROCESSING");
         assertThat(stats).containsKey("TOTAL");
         assertThat(stats.get("TOTAL")).isEqualByComparingTo(new BigDecimal("5000"));
     }
@@ -136,7 +136,7 @@ class AdminServiceTest {
     void getRecentOrders_success() {
         when(orderRepository.findTop5ByOrderByCreatedAtDesc()).thenReturn(List.of(order));
         when(orderItemRepository.findByOrderIdWithProduct("order-1")).thenReturn(List.of());
-        OrderResponse resp = new OrderResponse("order-1", "ORD-123", new BigDecimal("1000"), OrderStatus.PENDING, null, DeliveryStatus.PLACED, List.of(), LocalDateTime.now(), null, null, null);
+        OrderResponse resp = new OrderResponse("order-1", "ORD-123", new BigDecimal("1000"), OrderStatus.PROCESSING, null, DeliveryStatus.PLACED, List.of(), LocalDateTime.now(), null, null, null);
         when(orderMapper.toOrderResponse(eq(order), anyList())).thenReturn(resp);
 
         List<OrderResponse> recent = adminService.getRecentOrders();
@@ -148,7 +148,7 @@ class AdminServiceTest {
     void getTopProducts_withSales_returnsProducts() {
         Object[] row = new Object[]{"prod-1", 10L};
         when(orderItemRepository.findTopSellingProductIds(any(PageRequest.class))).thenReturn(java.util.Collections.singletonList(row));
-        when(productRepository.findById("prod-1")).thenReturn(Optional.of(product));
+        when(productRepository.findAllById(java.util.Set.of("prod-1"))).thenReturn(java.util.List.of(product));
         ProductResponse pr = new ProductResponse("prod-1", "Laptop", "Desc", new BigDecimal("1000"), 5, false, 4.5f, 0, null, LocalDateTime.now());
         when(productMapper.toResponse(product)).thenReturn(pr);
 

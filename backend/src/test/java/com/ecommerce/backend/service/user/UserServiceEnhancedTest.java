@@ -178,13 +178,12 @@ class UserServiceEnhancedTest {
     }
 
     @Test
-    void hardDeleteUser_hardDeleteFails_fallback() {
+    void hardDeleteUser_hardDeleteFails_throwsIllegalState() {
         when(userRepository.findByIdIncludingDeleted("user-1")).thenReturn(Optional.of(activeUser));
         doThrow(new RuntimeException("db fail")).when(userRepository).hardDeleteById("user-1");
-        doNothing().when(userRepository).deleteById("user-1");
 
-        userService.hardDeleteUser("user-1");
-
-        verify(userRepository).deleteById("user-1");
+        assertThatThrownBy(() -> userService.hardDeleteUser("user-1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Hard delete failed");
     }
 }

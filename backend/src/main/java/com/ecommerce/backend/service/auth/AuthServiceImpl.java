@@ -43,12 +43,24 @@ public class AuthServiceImpl implements AuthService {
 
         log.info("Login attempt for email: {}", request.email());
 
-        authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(
-                        request.email(),
-                        request.password()
-                )
-        );
+        if (!customUserDetailsService.doesUserExist(request.email())) {
+            throw new com.ecommerce.backend.exception.UserNotFoundException(
+                    "No account found with email: " + request.email()
+            );
+        }
+
+        try {
+            authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(
+                            request.email(),
+                            request.password()
+                    )
+            );
+        } catch (org.springframework.security.authentication.BadCredentialsException e) {
+            throw new org.springframework.security.authentication.BadCredentialsException(
+                    "Invalid password for email: " + request.email()
+            );
+        }
 
         log.debug(
                 "Authentication successful for email: {}",

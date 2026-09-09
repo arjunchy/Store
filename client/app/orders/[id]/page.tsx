@@ -29,6 +29,8 @@ function DetailsInner({ id }: { id: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cancelling, setCancelling] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState("");
 
   const load = async () => {
     if (!id) return;
@@ -66,6 +68,37 @@ function DetailsInner({ id }: { id: string }) {
   };
 
   const canCancel = order && (order.status === "PROCESSING" || order.status === "CONFIRMED");
+  const payStatus = String(order?.payment_status ?? order?.paymentStatus ?? "UNPAID").toUpperCase();
+  const payMethod = String(order?.paymentMethod ?? "esewa").toLowerCase();
+  const needsPayment = order && (payStatus === "UNPAID" || payStatus === "EXPIRED") && order.status !== "CANCELED";
+
+  const handlePayNow = async () => {
+    if (!order || paying) return;
+    setPaying(true);
+    setPayError("");
+    try {
+      if (payMethod === "khalti") {
+        const { initiateKhaltiPayment } = await import("@/lib/payment");
+        const khalti = await initiateKhaltiPayment(order.id);
+        const url = (khalti as any).paymentUrl || (khalti as any).payment_url;
+        if (!url) throw new Error("Khalti did not return payment_url");
+        try { sessionStorage.setItem("khalti_pidx", khalti.pidx); sessionStorage.setItem("khalti_orderId", order.id); } catch {}
+        window.location.href = url;
+        return;
+      }
+      const { initiateEsewaPayment, submitEsewaForm } = await import("@/lib/payment");
+      const esewa = await initiateEsewaPayment(order.id);
+      if (!esewa?.gatewayUrl || !esewa?.signature) throw new Error("eSewa did not return payment fields");
+      try {
+        sessionStorage.setItem("esewa_uuid", esewa.transactionUuid);
+        sessionStorage.setItem("esewa_orderId", order.id);
+      } catch {}
+      submitEsewaForm(esewa);
+    } catch (e: any) {
+      setPayError(e?.data?.message || e?.message || "Failed to start payment – try again.");
+      setPaying(false);
+    }
+  };
   const orderCfg = order ? getOrderStatusConfig(order.status) : null;
   const payCfg = order ? getPaymentStatusConfig(order.payment_status ?? order.paymentStatus ?? "") : null;
   const delCfg = order ? getDeliveryStatusConfig(order.delivery_status ?? order.deliveryStatus ?? "") : null;
@@ -200,7 +233,13 @@ function DetailsInner({ id }: { id: string }) {
               )}
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
+              {needsPayment && (
+                <button onClick={handlePayNow} disabled={paying} className="px-6 py-3 rounded-xl bg-[#1AA16B] text-white text-[13px] font-semibold hover:brightness-95 disabled:opacity-50 flex items-center gap-1.5">
+                  {paying ? <span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span> : <span className="material-symbols-outlined text-[16px]">payments</span>}
+                  {paying ? "Redirecting…" : `Pay Now with ${payMethod === "khalti" ? "Khalti" : "eSewa"}`}
+                </button>
+              )}
               {canCancel && (
                 <button onClick={handleCancel} disabled={cancelling} className="px-6 py-3 rounded-xl bg-[#fee2e2] text-[#b91c1c] border border-[#fecaca] text-[13px] font-semibold hover:bg-[#fee2e2]/80 disabled:opacity-50 flex items-center gap-1.5">
                   {cancelling && <span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span>} Cancel Order
@@ -209,6 +248,13 @@ function DetailsInner({ id }: { id: string }) {
               <Link href="/orders" className="px-6 py-3 rounded-xl border border-[#d6d3d1] text-[13px] font-semibold hover:bg-[#fafaf9]">Back to Orders</Link>
               {canCancel && <span className="text-[11px] text-[#57534e] self-center">Cancel allowed while PROCESSING or CONFIRMED</span>}
             </div>
+            {payError && <div className="mt-3 bg-[#fef2f2] border border-[#fecaca] rounded-xl px-3 py-2 text-[#b91c1c] text-[12px]">{payError}</div>}
+            {needsPayment && (
+              <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-[12px] text-amber-900">
+                <p className="font-semibold">Payment pending ({payStatus})</p>
+                <p className="mt-0.5">Pay with {payMethod === "khalti" ? "Khalti" : "eSewa"} – order auto-marks <span className="font-semibold">PAID</span> after gateway success. No manual step.</p>
+              </div>
+            )}
           </div>
 
           <div className="w-full lg:w-80 shrink-0 space-y-4">

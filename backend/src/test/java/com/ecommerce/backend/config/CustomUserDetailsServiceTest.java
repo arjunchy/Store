@@ -91,6 +91,20 @@ class CustomUserDetailsServiceTest {
     }
 
     @Test
+    void doesUserExist_trueWhenActive() {
+        when(userRepository.existsActiveByEmail("john@example.com")).thenReturn(true);
+
+        assertThat(service.doesUserExist("john@example.com")).isTrue();
+    }
+
+    @Test
+    void doesUserExist_falseWhenMissingOrDeleted() {
+        when(userRepository.existsActiveByEmail("ghost@example.com")).thenReturn(false);
+
+        assertThat(service.doesUserExist("ghost@example.com")).isFalse();
+    }
+
+    @Test
     void loadUserByUsername_usernameIsEmail() {
         when(userRepository.findActiveByEmail("john@example.com")).thenReturn(Optional.of(activeUser));
 

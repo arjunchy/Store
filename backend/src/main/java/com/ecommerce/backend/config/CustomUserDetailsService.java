@@ -47,4 +47,8 @@ public class CustomUserDetailsService implements UserDetailsService {
             throw e;
         }
     }
+
+    public boolean doesUserExist(String email) {
+        return userRepository.existsActiveByEmail(email);
+    }
 }

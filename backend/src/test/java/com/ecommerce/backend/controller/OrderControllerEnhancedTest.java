@@ -45,10 +45,10 @@ class OrderControllerEnhancedTest {
 
     @BeforeEach
     void setUp() {
-        orderResponse = new OrderResponse("order-1", "ORD-123", new BigDecimal("1000"), OrderStatus.PENDING, OrderPaymentStatus.PENDING, DeliveryStatus.PLACED, List.of(), LocalDateTime.now(), null, null, null);
+        orderResponse = new OrderResponse("order-1", "ORD-123", new BigDecimal("1000"), OrderStatus.PROCESSING, OrderPaymentStatus.UNPAID, DeliveryStatus.PLACED, List.of(), LocalDateTime.now(), null, null, null);
         detailResponse = new OrderDetailResponse(
                 "order-1", "ORD-123", "user-1", "john@example.com", "john",
-                new BigDecimal("1000"), OrderStatus.PENDING, OrderPaymentStatus.PENDING, DeliveryStatus.PLACED, "{\"city\":\"NYC\"}", null, null, null,
+                new BigDecimal("1000"), OrderStatus.PROCESSING, OrderPaymentStatus.UNPAID, DeliveryStatus.PLACED, "{\"city\":\"NYC\"}", null, null, null,
                 List.of(), List.of(), LocalDateTime.now(), LocalDateTime.now()
         );
 
@@ -63,13 +63,13 @@ class OrderControllerEnhancedTest {
     void getAllOrdersForAdmin_success_returns200() {
         Pageable pageable = PageRequest.of(0, 10);
         Page<OrderResponse> page = new PageImpl<>(List.of(orderResponse), pageable, 1);
-        when(orderService.getAllOrdersForAdmin(eq(pageable), eq(OrderStatus.PENDING), eq("ORD"))).thenReturn(page);
+        when(orderService.getAllOrdersForAdmin(eq(pageable), eq(OrderStatus.PROCESSING), eq("ORD"))).thenReturn(page);
 
         ResponseEntity<Page<OrderResponse>> resp = orderController.getAllOrdersForAdmin("PENDING", null, null, "ORD", null, "desc", pageable);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody().getTotalElements()).isEqualTo(1);
-        verify(orderService).getAllOrdersForAdmin(pageable, OrderStatus.PENDING, "ORD");
+        verify(orderService).getAllOrdersForAdmin(pageable, OrderStatus.PROCESSING, "ORD");
     }
 
     @Test

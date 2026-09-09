@@ -15,7 +15,7 @@ import {
   getPayment,
   clearCheckout,
 } from "@/lib/checkout";
-import { initiateKhaltiPayment, createPayment } from "@/lib/payment";
+import { initiateKhaltiPayment, initiateEsewaPayment, submitEsewaForm } from "@/lib/payment";
 import { stashCartBackup, clearCartBackup } from "@/lib/cart-backup";
 import type { ShippingAddress, DeliveryMethod, PaymentMethod } from "@/lib/types";
 
@@ -138,17 +138,20 @@ function ReviewInner() {
       }
     }
 
+    // eSewa (default, no COD): redirect to eSewa for authorization.
+    // Backend verify() auto-marks the order PAID on COMPLETE – no manual admin step.
     try {
-      await createPayment({ orderId: order.id, method: payment, amount: total });
-      await clearCheckout().catch(() => {});
+      const esewa = await initiateEsewaPayment(order.id);
+      if (!esewa?.gatewayUrl || !esewa?.signature) throw new Error("eSewa did not return payment fields");
       try {
-        await clearCart();
-        clearCartBackup();
-        try { sessionStorage.removeItem("apexcommerce_pending_order_id"); } catch {}
+        sessionStorage.setItem("esewa_uuid", esewa.transactionUuid);
+        sessionStorage.setItem("esewa_orderId", order.id);
       } catch {}
-      router.push("/order-confirmed");
+      await clearCheckout().catch(() => {});
+      submitEsewaForm(esewa);
+      return;
     } catch (e: any) {
-      const msg = e?.data?.message || e?.message || "Payment failed — order saved as UNPAID. Cart preserved. Please retry from Orders.";
+      const msg = e?.data?.message || e?.message || "Failed to initiate eSewa payment — order saved as UNPAID. Cart preserved. Please retry from Orders.";
       setError(msg);
       setPendingOrderId(order.id);
       setPlacing(false);
@@ -208,13 +211,19 @@ function ReviewInner() {
         return;
       }
     }
+    // eSewa retry – same redirect flow, backend auto-PAIDs on verify
     try {
-      await createPayment({ orderId: pendingOrderId, method: payment, amount: total });
+      const esewa = await initiateEsewaPayment(pendingOrderId);
+      if (!esewa?.gatewayUrl || !esewa?.signature) throw new Error("eSewa did not return payment fields");
+      try {
+        sessionStorage.setItem("esewa_uuid", esewa.transactionUuid);
+        sessionStorage.setItem("esewa_orderId", pendingOrderId);
+      } catch {}
       await clearCheckout().catch(() => {});
-      try { await clearCart(); clearCartBackup(); try { sessionStorage.removeItem("apexcommerce_pending_order_id"); } catch {} } catch {}
-      router.push("/order-confirmed");
+      submitEsewaForm(esewa);
+      return;
     } catch (e: any) {
-      const msg = e?.data?.message || e?.message || "Payment failed — order saved as UNPAID. Cart preserved.";
+      const msg = e?.data?.message || e?.message || "eSewa retry failed — order saved as UNPAID. Cart preserved.";
       setError(msg);
       setPlacing(false);
     }

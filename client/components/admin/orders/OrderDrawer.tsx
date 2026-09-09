@@ -96,6 +96,17 @@ export default function OrderDrawer({ orderId, onClose, onUpdated }: Props) {
 
   const handlePayment = async (next: PaymentStatus) => {
     if (!order) return;
+    const cur = (order?.payment_status ?? (order as any)?.paymentStatus ?? "UNPAID") as string;
+    const m = String((order as any)?.paymentMethod ?? "esewa").toLowerCase();
+    const wallet = m === "esewa" || m === "khalti" || m === "" || m === "null" || m === "undefined";
+    if (wallet && cur === "UNPAID" && next === "PAID") {
+      alert("Manual marking disabled – eSewa/Khalti auto-marks PAID after gateway verification.");
+      return;
+    }
+    if (wallet && cur === "EXPIRED" && next === "PAID") {
+      alert("Manual marking disabled – ask customer to Pay Again; gateway will auto-mark PAID.");
+      return;
+    }
     setUpdating("payment");
     try {
       const updated = await orderAdminApi.updatePayment(order.id, next);
@@ -344,26 +355,41 @@ export default function OrderDrawer({ orderId, onClose, onUpdated }: Props) {
                        {getAutoSyncHint(deliveryCur, paymentCur)}
                      </p>
                    </div>
-                   <div>
-                     <p className="text-[11px] font-semibold tracking-widest text-[#57534e] uppercase mb-1">Payment</p>
-                     <select value={paymentCur} onChange={(e) => handlePayment(e.target.value as PaymentStatus)} disabled={!!updating} className="w-full bg-[#fafaf9] border border-[#d6d3d1] rounded-lg px-2 py-2 text-[12px] font-medium focus:border-[#b45309] outline-none disabled:opacity-50">
-                       {PAYMENT_STATUSES.map((ps) => {
-                         const isCurrent = ps === paymentCur;
-                         const isValid = isValidPaymentTransition(paymentCur, ps);
-                         return (
-                           <option
-                             key={ps}
-                             value={ps}
-                             disabled={!isValid && !isCurrent}
-                             title={!isValid && !isCurrent ? getDisabledReason(paymentCur, ps) : undefined}
-                           >
-                             {getPaymentStatusConfig(ps).label}
-                             {isCurrent ? " (current)" : !isValid ? " (disabled)" : ""}
-                           </option>
-                         );
-                       })}
-                     </select>
-                   </div>
+                    <div>
+                      <p className="text-[11px] font-semibold tracking-widest text-[#57534e] uppercase mb-1">Payment</p>
+                      {(() => {
+                        const m = String((order as any)?.paymentMethod ?? "esewa").toLowerCase();
+                        const wallet = m === "esewa" || m === "khalti" || m === "" || m === "null" || m === "undefined";
+                        if (wallet && (paymentCur === "UNPAID" || paymentCur === "EXPIRED")) {
+                          return (
+                            <div className="w-full bg-[#fafaf9] border border-[#d6d3d1] rounded-lg px-2 py-2">
+                              <span className={`inline-flex px-2 py-0.5 rounded-full border text-[11px] font-semibold ${getPaymentStatusConfig(paymentCur).color}`}>{getPaymentStatusConfig(paymentCur).label}</span>
+                              <p className="text-[10px] text-[#57534e] mt-1 flex items-center gap-1"><span className="material-symbols-outlined text-[12px]">lock</span> Auto via gateway – manual PAID disabled</p>
+                            </div>
+                          );
+                        }
+                        return (
+                          <select value={paymentCur} onChange={(e) => handlePayment(e.target.value as PaymentStatus)} disabled={!!updating} className="w-full bg-[#fafaf9] border border-[#d6d3d1] rounded-lg px-2 py-2 text-[12px] font-medium focus:border-[#b45309] outline-none disabled:opacity-50">
+                            {PAYMENT_STATUSES.map((ps) => {
+                              if (wallet && ps === "PAID" && paymentCur !== "PAID") return null;
+                              const isCurrent = ps === paymentCur;
+                              const isValid = isValidPaymentTransition(paymentCur, ps);
+                              return (
+                                <option
+                                  key={ps}
+                                  value={ps}
+                                  disabled={!isValid && !isCurrent}
+                                  title={!isValid && !isCurrent ? getDisabledReason(paymentCur, ps) : undefined}
+                                >
+                                  {getPaymentStatusConfig(ps).label}
+                                  {isCurrent ? " (current)" : !isValid ? " (disabled)" : ""}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        );
+                      })()}
+                    </div>
                  </div>
               </div>
 

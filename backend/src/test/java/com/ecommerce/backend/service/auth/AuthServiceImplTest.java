@@ -71,6 +71,7 @@ class AuthServiceImplTest {
     @Test
     void login_success() {
         AuthRequest request = new AuthRequest("john@example.com", "password123");
+        when(customUserDetailsService.doesUserExist("john@example.com")).thenReturn(true);
         when(customUserDetailsService.loadUserByUsername("john@example.com")).thenReturn(userDetails);
         when(jwtUtil.generateAccessToken(userDetails)).thenReturn("access-token");
         when(jwtUtil.generateRefreshToken(userDetails)).thenReturn("refresh-token");
@@ -89,6 +90,7 @@ class AuthServiceImplTest {
         User adminUser = User.builder().userId("2").username("admin").email("admin@example.com").passwordHash("h").userRole(UserRole.ADMIN).build();
         CustomUserDetails adminDetails = new CustomUserDetails(adminUser);
         AuthRequest request = new AuthRequest("admin@example.com", "pass");
+        when(customUserDetailsService.doesUserExist("admin@example.com")).thenReturn(true);
         when(customUserDetailsService.loadUserByUsername("admin@example.com")).thenReturn(adminDetails);
         when(jwtUtil.generateAccessToken(adminDetails)).thenReturn("a");
         when(jwtUtil.generateRefreshToken(adminDetails)).thenReturn("r");
@@ -99,13 +101,28 @@ class AuthServiceImplTest {
     }
 
     @Test
+    void login_unknownEmail_throwsUserNotFound() {
+        AuthRequest request = new AuthRequest("ghost@example.com", "whatever");
+        when(customUserDetailsService.doesUserExist("ghost@example.com")).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.login(request))
+                .isInstanceOf(com.ecommerce.backend.exception.UserNotFoundException.class)
+                .hasMessageContaining("No account found");
+
+        verify(authenticationManager, never()).authenticate(any());
+        verify(jwtUtil, never()).generateAccessToken(any());
+    }
+
+    @Test
     void login_badCredentials_propagatesException() {
         AuthRequest request = new AuthRequest("john@example.com", "wrong");
+        when(customUserDetailsService.doesUserExist("john@example.com")).thenReturn(true);
         doThrow(new BadCredentialsException("Bad credentials"))
                 .when(authenticationManager).authenticate(any());
 
         assertThatThrownBy(() -> authService.login(request))
-                .isInstanceOf(BadCredentialsException.class);
+                .isInstanceOf(BadCredentialsException.class)
+                .hasMessageContaining("Invalid password");
 
         verify(jwtUtil, never()).generateAccessToken(any());
     }
@@ -113,6 +130,7 @@ class AuthServiceImplTest {
     @Test
     void login_authenticatesWithEmailAndPassword() {
         AuthRequest request = new AuthRequest("john@example.com", "password123");
+        when(customUserDetailsService.doesUserExist(anyString())).thenReturn(true);
         when(customUserDetailsService.loadUserByUsername(anyString())).thenReturn(userDetails);
         when(jwtUtil.generateAccessToken(any())).thenReturn("a");
         when(jwtUtil.generateRefreshToken(any())).thenReturn("r");
@@ -143,8 +161,8 @@ class AuthServiceImplTest {
         when(jwtUtil.isRefreshToken(refreshToken)).thenReturn(true);
         when(jwtUtil.extractUsername(refreshToken)).thenReturn("john@example.com");
         when(customUserDetailsService.loadUserByUsername("john@example.com")).thenReturn(userDetails);
-        when(jwtUtil.isTokenValid(refreshToken, userDetails)).thenReturn(true);
-        when(refreshTokenRepository.findByToken(refreshToken)).thenReturn(Optional.of(dbToken));
+        when(jwtUtil.isTokenValidRefresh(refreshToken, userDetails)).thenReturn(true);
+        when(refreshTokenRepository.findByTokenForUpdate(refreshToken)).thenReturn(Optional.of(dbToken));
         when(jwtUtil.generateAccessToken(userDetails)).thenReturn("new-access");
         when(jwtUtil.generateRefreshToken(userDetails)).thenReturn("new-refresh");
 
@@ -155,7 +173,7 @@ class AuthServiceImplTest {
         assertThat(response.email()).isEqualTo("john@example.com");
         verify(jwtUtil).isRefreshToken(refreshToken);
         verify(jwtUtil).extractUsername(refreshToken);
-        verify(jwtUtil).isTokenValid(refreshToken, userDetails);
+        verify(jwtUtil).isTokenValidRefresh(refreshToken, userDetails);
         verify(refreshTokenRepository).save(dbToken);
         assertThat(dbToken.getRevoked()).isTrue();
     }
@@ -171,7 +189,7 @@ class AuthServiceImplTest {
                 .hasMessageContaining("Invalid refresh token");
 
         verify(jwtUtil, never()).extractUsername(anyString());
-        verify(jwtUtil, never()).isTokenValid(anyString(), any());
+        verify(jwtUtil, never()).isTokenValidRefresh(anyString(), any());
     }
 
     @Test
@@ -181,13 +199,13 @@ class AuthServiceImplTest {
         when(jwtUtil.isRefreshToken(token)).thenReturn(true);
         when(jwtUtil.extractUsername(token)).thenReturn("john@example.com");
         when(customUserDetailsService.loadUserByUsername("john@example.com")).thenReturn(userDetails);
-        when(jwtUtil.isTokenValid(token, userDetails)).thenReturn(false);
+        when(jwtUtil.isTokenValidRefresh(token, userDetails)).thenReturn(false);
 
         assertThatThrownBy(() -> authService.refresh(request))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid or expired");
 
-        verify(jwtUtil).isTokenValid(token, userDetails);
+        verify(jwtUtil).isTokenValidRefresh(token, userDetails);
         verify(jwtUtil, never()).generateAccessToken(any());
     }
 
@@ -220,8 +238,8 @@ class AuthServiceImplTest {
         when(jwtUtil.isRefreshToken(token)).thenReturn(true);
         when(jwtUtil.extractUsername(token)).thenReturn("john@example.com");
         when(customUserDetailsService.loadUserByUsername("john@example.com")).thenReturn(userDetails);
-        when(jwtUtil.isTokenValid(token, userDetails)).thenReturn(true);
-        when(refreshTokenRepository.findByToken(token)).thenReturn(Optional.of(dbToken));
+        when(jwtUtil.isTokenValidRefresh(token, userDetails)).thenReturn(true);
+        when(refreshTokenRepository.findByTokenForUpdate(token)).thenReturn(Optional.of(dbToken));
         when(jwtUtil.generateAccessToken(userDetails)).thenReturn("a");
         when(jwtUtil.generateRefreshToken(userDetails)).thenReturn("r");
 
@@ -248,8 +266,8 @@ class AuthServiceImplTest {
         when(jwtUtil.isRefreshToken(token)).thenReturn(true);
         when(jwtUtil.extractUsername(token)).thenReturn("john@example.com");
         when(customUserDetailsService.loadUserByUsername(anyString())).thenReturn(userDetails);
-        when(jwtUtil.isTokenValid(anyString(), any())).thenReturn(true);
-        when(refreshTokenRepository.findByToken(token)).thenReturn(Optional.of(dbToken));
+        when(jwtUtil.isTokenValidRefresh(anyString(), any())).thenReturn(true);
+        when(refreshTokenRepository.findByTokenForUpdate(token)).thenReturn(Optional.of(dbToken));
         when(jwtUtil.generateAccessToken(any())).thenReturn("a");
         when(jwtUtil.generateRefreshToken(any())).thenReturn("r");
 

@@ -66,8 +66,8 @@ class OrderServiceEnhancedTest {
                 .user(user)
                 .orderNumber("ORD-123")
                 .totalAmount(new BigDecimal("1000"))
-                .status(OrderStatus.PENDING)
-                .paymentStatus(OrderPaymentStatus.PENDING)
+                .status(OrderStatus.PROCESSING)
+                .paymentStatus(OrderPaymentStatus.UNPAID)
                 .shippingAddress("{\"city\":\"NYC\"}")
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
@@ -131,7 +131,7 @@ class OrderServiceEnhancedTest {
     void getOrderFullDetails_success_asAdmin() {
         when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
         when(orderItemRepository.findByOrderIdWithProduct("order-1")).thenReturn(List.of(orderItem));
-        OrderStatusHistory history = OrderStatusHistory.builder().id("h-1").order(order).status(OrderStatus.PENDING).note("Order placed").changedBy("user-1").createdAt(LocalDateTime.now()).build();
+        OrderStatusHistory history = OrderStatusHistory.builder().id("h-1").order(order).status(OrderStatus.PROCESSING).note("Order placed").changedBy("user-1").createdAt(LocalDateTime.now()).build();
         when(orderStatusHistoryRepository.findByOrderId("order-1")).thenReturn(List.of(history));
 
         OrderDetailResponse detail = orderService.getOrderFullDetails("order-1");
@@ -182,21 +182,21 @@ class OrderServiceEnhancedTest {
 
     @Test
     void updateOrderStatusWithNote_success() {
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate("order-1")).thenReturn(Optional.of(order));
         when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
         when(orderItemRepository.findByOrderIdWithProduct("order-1")).thenReturn(List.of(orderItem));
 
-        OrderResponse resp = orderService.updateOrderStatusWithNote("order-1", OrderStatus.PROCESSING, "Processing", "admin-1");
+        OrderResponse resp = orderService.updateOrderStatusWithNote("order-1", OrderStatus.CONFIRMED, "Processing", "admin-1");
 
-        assertThat(resp.status()).isEqualTo(OrderStatus.PROCESSING);
-        verify(orderStatusHistoryRepository).save(argThat(h -> h.getStatus() == OrderStatus.PROCESSING && "Processing".equals(h.getNote())));
+        assertThat(resp.status()).isEqualTo(OrderStatus.CONFIRMED);
+        verify(orderStatusHistoryRepository).save(argThat(h -> h.getStatus() == OrderStatus.CONFIRMED && "Processing".equals(h.getNote())));
     }
 
     @Test
     void updateOrderStatusWithNote_invalidTransition_throws() {
         order.setStatus(OrderStatus.DELIVERED);
-        when(orderRepository.findById("order-1")).thenReturn(Optional.of(order));
-        assertThatThrownBy(() -> orderService.updateOrderStatusWithNote("order-1", OrderStatus.PENDING, "note", "admin-1"))
+        when(orderRepository.findByIdForUpdate("order-1")).thenReturn(Optional.of(order));
+        assertThatThrownBy(() -> orderService.updateOrderStatusWithNote("order-1", OrderStatus.PROCESSING, "note", "admin-1"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Cannot transition");
     }

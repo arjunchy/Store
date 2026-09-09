@@ -34,8 +34,9 @@ class FileStorageServiceTest {
 
     @Test
     void storeFile_validImage_returnsUrlAndCreatesFile() throws Exception {
+        byte[] jpegBytes = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01};
         MockMultipartFile file = new MockMultipartFile(
-                "file", "test.jpg", "image/jpeg", "fake-image-content".getBytes()
+                "file", "test.jpg", "image/jpeg", jpegBytes
         );
         String url = service.storeFile(file, "products/123");
         assertNotNull(url);
@@ -83,8 +84,9 @@ class FileStorageServiceTest {
 
     @Test
     void deleteFile_deletesPhysicalFile() throws Exception {
+        byte[] pngBytes = new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
         MockMultipartFile file = new MockMultipartFile(
-                "file", "test.png", "image/png", "content".getBytes()
+                "file", "test.png", "image/png", pngBytes
         );
         String url = service.storeFile(file, "products/123");
         Resource before = service.loadFile(url);
@@ -104,8 +106,9 @@ class FileStorageServiceTest {
 
     @Test
     void loadFile_fromRelativePath_works() throws Exception {
+        byte[] webpBytes = new byte[]{0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50};
         MockMultipartFile file = new MockMultipartFile(
-                "file", "test.webp", "image/webp", "webpcontent".getBytes()
+                "file", "test.webp", "image/webp", webpBytes
         );
         String url = service.storeFile(file, "products/123");
         String relative = url.replace(baseUrl, "");
@@ -115,8 +118,9 @@ class FileStorageServiceTest {
 
     @Test
     void storeFile_sanitizesSubfolderAndCreatesDirectories() throws Exception {
+        byte[] jpegBytes = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0x00, 0x10};
         MockMultipartFile file = new MockMultipartFile(
-                "file", "test.jpg", "image/jpeg", "content".getBytes()
+                "file", "test.jpg", "image/jpeg", jpegBytes
         );
         String url = service.storeFile(file, "products/abc-123");
         assertTrue(url.contains("products/abc-123"));

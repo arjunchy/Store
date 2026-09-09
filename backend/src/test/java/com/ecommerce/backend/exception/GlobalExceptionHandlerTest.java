@@ -115,9 +115,31 @@ class GlobalExceptionHandlerTest {
                 handler.handleGeneralException(new RuntimeException("Unexpected error"), createWebRequest());
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
-        assertThat(response.getBody().get("message")).isEqualTo("Unexpected error");
+        assertThat(response.getBody().get("message")).isEqualTo("An unexpected error occurred. Please try again later.");
         assertThat(response.getBody().get("error")).isEqualTo("Internal Server Error");
         assertThat(response.getBody().get("status")).isEqualTo(500);
+    }
+
+    @Test
+    void handleUserNotFoundException_returns404() {
+        ResponseEntity<Map<String, Object>> response =
+                handler.handleUserNotFoundException(new com.ecommerce.backend.exception.UserNotFoundException("No account found with email: ghost@example.com"), createWebRequest());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody().get("message")).isEqualTo("No account found with email: ghost@example.com");
+        assertThat(response.getBody().get("error")).isEqualTo("Not Found");
+        assertThat(response.getBody().get("status")).isEqualTo(404);
+    }
+
+    @Test
+    void handleAuthenticationException_returns401WithMessage() {
+        ResponseEntity<Map<String, Object>> response =
+                handler.handleAuthenticationException(new org.springframework.security.authentication.BadCredentialsException("Invalid password for email: john@example.com"), createWebRequest());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(response.getBody().get("message")).isEqualTo("Invalid password for email: john@example.com");
+        assertThat(response.getBody().get("error")).isEqualTo("Unauthorized");
+        assertThat(response.getBody().get("status")).isEqualTo(401);
     }
 
     @Test

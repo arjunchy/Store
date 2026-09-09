@@ -39,7 +39,7 @@ public class FileStorageService {
 
     public FileStorageService(
             @Value("${app.upload.dir:uploads/}") String uploadDir,
-            @Value("${app.upload.base-url:http://localhost:8080/uploads/}") String baseUrl) {
+            @Value("${app.upload.base-url:http://localhost:8081/uploads/}") String baseUrl) {
         this.uploadDir = Paths.get(uploadDir).toAbsolutePath().normalize();
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
         try {

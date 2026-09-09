@@ -17,7 +17,7 @@ public class WebConfig implements WebMvcConfigurer {
     @Value("${app.upload.dir:uploads/}")
     private String uploadDir;
 
-    @Value("${app.upload.base-url:http://localhost:8080/uploads/}")
+    @Value("${app.upload.base-url:http://localhost:8081/uploads/}")
     private String baseUrl;
 
     @Override

@@ -1,10 +1,13 @@
 package com.ecommerce.backend.controller;
 
 import com.ecommerce.backend.config.CustomUserDetails;
+import com.ecommerce.backend.dto.request.EsewaVerifyRequest;
 import com.ecommerce.backend.dto.request.KhaltiLookupRequest;
 import com.ecommerce.backend.dto.request.PaymentRequest;
+import com.ecommerce.backend.dto.response.EsewaInitiateResponse;
 import com.ecommerce.backend.dto.response.KhaltiInitiateResponse;
 import com.ecommerce.backend.dto.response.PaymentResponse;
+import com.ecommerce.backend.service.payment.EsewaService;
 import com.ecommerce.backend.service.payment.KhaltiService;
 import com.ecommerce.backend.service.payment.PaymentService;
 import jakarta.validation.Valid;
@@ -28,6 +31,9 @@ public class PaymentController {
 
     @Autowired
     private KhaltiService khaltiService;
+
+    @Autowired
+    private EsewaService esewaService;
 
     @PostMapping
     public ResponseEntity<PaymentResponse> processPayment(
@@ -155,6 +161,31 @@ public class PaymentController {
         // Public callback support – frontend also calls lookup via POST, this is convenience
         log.info("GET /api/payments/khalti/callback pidx={} status={}", pidx, status);
         Map<String, Object> result = khaltiService.lookup(pidx);
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/esewa/initiate")
+    public ResponseEntity<EsewaInitiateResponse> initiateEsewa(
+            @RequestBody Map<String, String> body,
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
+        String orderId = body.get("orderId");
+        if (orderId == null) orderId = body.get("order_id");
+        if (orderId == null) orderId = body.get("transaction_uuid");
+        if (orderId == null || orderId.isBlank()) throw new IllegalArgumentException("orderId is required");
+        String userId = userDetails.getUserId();
+        log.info("POST /api/payments/esewa/initiate orderId={} userId={}", orderId, userId);
+        EsewaInitiateResponse resp = esewaService.initiate(orderId, userId);
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/esewa/verify")
+    public ResponseEntity<Map<String, Object>> verifyEsewa(
+            @RequestBody EsewaVerifyRequest request,
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
+        log.info("POST /api/payments/esewa/verify uuid={} hasData={}",
+                request.transactionUuid(), request.data() != null && !request.data().isBlank());
+        Map<String, Object> result = esewaService.verify(
+                request.data(), request.transactionUuid(), request.transactionCode(), request.totalAmount());
         return ResponseEntity.ok(result);
     }
 }

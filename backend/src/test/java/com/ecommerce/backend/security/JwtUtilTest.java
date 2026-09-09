@@ -124,19 +124,13 @@ class JwtUtilTest {
     }
 
     @Test
-    void getSigningKey_shortSecret_handledViaSha256() {
+    void getSigningKey_shortSecret_throwsIllegalState() {
         JwtUtil shortSecretUtil = new JwtUtil();
         ReflectionTestUtils.setField(shortSecretUtil, "secret", "short");
         ReflectionTestUtils.setField(shortSecretUtil, "expiration", 900000L);
         ReflectionTestUtils.setField(shortSecretUtil, "refreshExpiration", 604800000L);
 
-        User user = User.builder().userId("1").username("u").email("a@b.com").passwordHash("h").userRole(UserRole.USER).build();
-        CustomUserDetails details = new CustomUserDetails(user);
-
-        String token = shortSecretUtil.generateAccessToken(details);
-        assertThat(token).isNotBlank();
-        assertThat(shortSecretUtil.isTokenValid(token, details)).isTrue();
-        assertThat(shortSecretUtil.extractUsername(token)).isEqualTo("a@b.com");
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, shortSecretUtil::init);
     }
 
     @Test

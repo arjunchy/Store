@@ -141,9 +141,24 @@ export default function AdminOrdersPage() {
     }
   };
 
+  const isWalletOrder = (o: any): boolean => {
+    // No COD – all orders are prepaid wallets (esewa/khalti). Manual UNPAID→PAID is
+    // disabled; PAID is set automatically by gateway verify (eSewa/Khalti lookup).
+    const m = String(o?.paymentMethod ?? o?.payment_method ?? "esewa").toLowerCase();
+    return m === "esewa" || m === "khalti" || m === "" || m === "null" || m === "undefined";
+  };
+
   const handlePaymentChange = async (orderId: string, newPs: PaymentStatus) => {
     const order = orders.find(o=>o.id===orderId);
     const cur = (order?.payment_status ?? (order as any)?.paymentStatus ?? "UNPAID") as string;
+    if (isWalletOrder(order) && cur === "UNPAID" && newPs === "PAID") {
+      showToast("Manual marking disabled – eSewa/Khalti auto-marks PAID after gateway verification.", "error");
+      return;
+    }
+    if (isWalletOrder(order) && cur === "EXPIRED" && newPs === "PAID") {
+      showToast("Manual marking disabled – ask customer to Pay Again; gateway will auto-mark PAID.", "error");
+      return;
+    }
     const allowedP = (PAYMENT_ALLOWED as Record<string,string[]>)[cur] ?? [];
     if (cur !== newPs && !allowedP.includes(newPs as unknown as string)) {
       showToast(`Invalid payment: ${cur} → ${newPs}. Allowed: ${allowedP.join(", ")||"terminal"}`, "error");
@@ -501,28 +516,42 @@ export default function AdminOrdersPage() {
                           />
                         </td>
                          <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                            <select
-                              value={payment}
-                              onChange={(e) => handlePaymentChange(o.id, e.target.value as PaymentStatus)}
-                              disabled={updating === o.id}
-                              className="px-2 py-1 rounded-lg border border-[#d6d3d1] bg-[#fafaf9] text-[11px] font-semibold focus:border-[#b45309] outline-none disabled:opacity-50"
-                            >
-                              {PAYMENT_STATUSES.map((ps) => {
-                                const isCurrent = ps === payment;
-                                const isValid = isValidPaymentTransition(payment, ps);
-                                return (
-                                  <option
-                                    key={ps}
-                                    value={ps}
-                                    disabled={!isValid && !isCurrent}
-                                    title={!isValid && !isCurrent ? getDisabledReason(payment, ps) : undefined}
-                                  >
-                                    {getPaymentStatusConfig(ps).label}
-                                    {isCurrent ? " (current)" : !isValid ? " (disabled)" : ""}
-                                  </option>
-                                );
-                              })}
-                            </select>
+                            {isWalletOrder(o) && (payment === "UNPAID" || payment === "EXPIRED") ? (
+                              <span className="inline-flex flex-col gap-1">
+                                <span className={`px-2 py-1 rounded-lg border text-[11px] font-semibold ${getPaymentStatusConfig(payment).color}`}>
+                                  {getPaymentStatusConfig(payment).label}
+                                </span>
+                                <span className="text-[10px] text-[#57534e] flex items-center gap-1" title="PAID is set automatically by eSewa/Khalti gateway verification – no manual edit">
+                                  <span className="material-symbols-outlined text-[12px]">lock</span> Auto via gateway
+                                </span>
+                              </span>
+                            ) : (
+                              <select
+                                value={payment}
+                                onChange={(e) => handlePaymentChange(o.id, e.target.value as PaymentStatus)}
+                                disabled={updating === o.id}
+                                title={isWalletOrder(o) ? "Wallet order – UNPAID→PAID is automatic via gateway; refunds can still be managed" : undefined}
+                                className="px-2 py-1 rounded-lg border border-[#d6d3d1] bg-[#fafaf9] text-[11px] font-semibold focus:border-[#b45309] outline-none disabled:opacity-50"
+                              >
+                                {PAYMENT_STATUSES.map((ps) => {
+                                  const isCurrent = ps === payment;
+                                  // Hide manual PAID target for wallet orders – gateway sets it
+                                  if (isWalletOrder(o) && ps === "PAID" && payment !== "PAID") return null;
+                                  const isValid = isValidPaymentTransition(payment, ps);
+                                  return (
+                                    <option
+                                      key={ps}
+                                      value={ps}
+                                      disabled={!isValid && !isCurrent}
+                                      title={!isValid && !isCurrent ? getDisabledReason(payment, ps) : undefined}
+                                    >
+                                      {getPaymentStatusConfig(ps).label}
+                                      {isCurrent ? " (current)" : !isValid ? " (disabled)" : ""}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            )}
                           </td>
                         <td className="px-4 py-3 text-[12px] text-[#57534e] max-w-[160px]">
                           <div className="truncate">{o.items.map((it) => it.name ?? it.product_id).join(", ") || "—"}</div>
@@ -731,29 +760,42 @@ export default function AdminOrdersPage() {
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <p className="text-[11px] font-semibold tracking-widest text-[#57534e] uppercase mb-1">Payment</p>
-                          <select
-                            value={(detail.payment_status ?? (detail as unknown as { paymentStatus: string }).paymentStatus) as string}
-                            onChange={(e) => handlePaymentChange(detail.id, e.target.value as PaymentStatus)}
-                            disabled={!!updating}
-                            className="w-full bg-[#fafaf9] border border-[#d6d3d1] rounded-lg px-2 py-2 text-[12px] font-medium focus:border-[#b45309] outline-none disabled:opacity-50"
-                          >
-                            {PAYMENT_STATUSES.map((ps) => {
-                              const cur = (detail.payment_status ?? (detail as unknown as { paymentStatus: string }).paymentStatus ?? "UNPAID") as string;
-                              const isCurrent = ps === cur;
-                              const isValid = isValidPaymentTransition(cur, ps);
+                          {(() => {
+                            const cur = (detail.payment_status ?? (detail as unknown as { paymentStatus: string }).paymentStatus ?? "UNPAID") as string;
+                            if (isWalletOrder(detail) && (cur === "UNPAID" || cur === "EXPIRED")) {
                               return (
-                                <option
-                                  key={ps}
-                                  value={ps}
-                                  disabled={!isValid && !isCurrent}
-                                  title={!isValid && !isCurrent ? getDisabledReason(cur, ps) : undefined}
-                                >
-                                  {getPaymentStatusConfig(ps).label}
-                                  {isCurrent ? " (current)" : !isValid ? " (disabled)" : ""}
-                                </option>
+                                <div className="w-full bg-[#fafaf9] border border-[#d6d3d1] rounded-lg px-2 py-2">
+                                  <span className={`inline-flex px-2 py-0.5 rounded-full border text-[11px] font-semibold ${getPaymentStatusConfig(cur).color}`}>{getPaymentStatusConfig(cur).label}</span>
+                                  <p className="text-[10px] text-[#57534e] mt-1 flex items-center gap-1"><span className="material-symbols-outlined text-[12px]">lock</span> Auto via gateway – manual PAID disabled</p>
+                                </div>
                               );
-                            })}
-                          </select>
+                            }
+                            return (
+                              <select
+                                value={cur}
+                                onChange={(e) => handlePaymentChange(detail.id, e.target.value as PaymentStatus)}
+                                disabled={!!updating}
+                                className="w-full bg-[#fafaf9] border border-[#d6d3d1] rounded-lg px-2 py-2 text-[12px] font-medium focus:border-[#b45309] outline-none disabled:opacity-50"
+                              >
+                                {PAYMENT_STATUSES.map((ps) => {
+                                  if (isWalletOrder(detail) && ps === "PAID" && cur !== "PAID") return null;
+                                  const isCurrent = ps === cur;
+                                  const isValid = isValidPaymentTransition(cur, ps);
+                                  return (
+                                    <option
+                                      key={ps}
+                                      value={ps}
+                                      disabled={!isValid && !isCurrent}
+                                      title={!isValid && !isCurrent ? getDisabledReason(cur, ps) : undefined}
+                                    >
+                                      {getPaymentStatusConfig(ps).label}
+                                      {isCurrent ? " (current)" : !isValid ? " (disabled)" : ""}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            );
+                          })()}
                         </div>
                        <div>
                          <p className="text-[11px] font-semibold tracking-widest text-[#57534e] uppercase mb-1">Delivery</p>
