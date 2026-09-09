@@ -217,7 +217,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, []);
 
-  const isAuthenticated = !!user && (!!getAccessToken() || !!getRefreshToken());
+  const isAuthenticated = !!user && !!getAccessToken();
   const isAdmin = isAdminRole(user?.userRole);
 
   return (

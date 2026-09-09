@@ -80,6 +80,7 @@ class OrderServiceImplTest {
         when(addressRepository.findById("addr-1")).thenReturn(Optional.of(address));
         doAnswer(inv -> "{\"street\":\"123 Main St\"}").when(objectMapper).writeValueAsString(any());
         when(orderRepository.save(any(Order.class))).thenReturn(order);
+        when(productRepository.findByIdForUpdate("prod-1")).thenReturn(Optional.of(product));
         when(productRepository.findById("prod-1")).thenReturn(Optional.of(product));
         when(orderItemRepository.save(any(OrderItem.class))).thenReturn(mock(OrderItem.class));
         when(productRepository.save(any(Product.class))).thenReturn(product);
@@ -94,7 +95,7 @@ class OrderServiceImplTest {
         assertThat(response).isNotNull();
         assertThat(response.orderNumber()).isEqualTo("ORD-1234");
         verify(orderRepository, times(2)).save(any());
-        verify(cartRepository).save(any());
+        verify(cartRepository, never()).save(any());
     }
 
     @Test
@@ -161,6 +162,7 @@ class OrderServiceImplTest {
         when(addressRepository.findById("addr-1")).thenReturn(Optional.of(address));
         doAnswer(inv -> "{}").when(objectMapper).writeValueAsString(any());
         when(orderRepository.save(any())).thenReturn(order);
+        when(productRepository.findByIdForUpdate("prod-2")).thenReturn(Optional.of(lowStockProduct));
         when(productRepository.findById("prod-2")).thenReturn(Optional.of(lowStockProduct));
 
         assertThatThrownBy(() -> orderService.placeOrder("user-1", new OrderRequest("addr-1")))

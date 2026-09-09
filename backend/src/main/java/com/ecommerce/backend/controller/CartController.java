@@ -3,14 +3,25 @@ package com.ecommerce.backend.controller;
 import com.ecommerce.backend.config.CustomUserDetails;
 import com.ecommerce.backend.dto.request.CartItemRequest;
 import com.ecommerce.backend.dto.response.CartResponse;
+import com.ecommerce.backend.entity.Cart;
+import com.ecommerce.backend.entity.CartItem;
+import com.ecommerce.backend.entity.Order;
+import com.ecommerce.backend.entity.Product;
+import com.ecommerce.backend.repository.CartItemRepository;
+import com.ecommerce.backend.repository.CartRepository;
+import com.ecommerce.backend.repository.OrderRepository;
+import com.ecommerce.backend.repository.OrderItemRepository;
+import com.ecommerce.backend.repository.ProductRepository;
 import com.ecommerce.backend.service.cart.CartService;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -20,6 +31,21 @@ public class CartController {
 
     @Autowired
     private CartService cartService;
+
+    @Autowired
+    private CartRepository cartRepository;
+
+    @Autowired
+    private CartItemRepository cartItemRepository;
+
+    @Autowired
+    private OrderRepository orderRepository;
+
+    @Autowired
+    private OrderItemRepository orderItemRepository;
+
+    @Autowired
+    private ProductRepository productRepository;
 
     @PostMapping("/items")
     public ResponseEntity<CartResponse> addItem(
@@ -257,5 +283,67 @@ public class CartController {
 
             throw e;
         }
+    }
+
+    @PostMapping("/restore-from-order/{orderId}")
+    @Transactional
+    public ResponseEntity<CartResponse> restoreFromOrder(
+            @PathVariable String orderId,
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
+        String userId = userDetails.getUserId();
+        log.info("POST /api/cart/restore-from-order/{} for user {}", orderId, userId);
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found"));
+        if (!order.getUser().getUserId().equals(userId)) {
+            throw new IllegalArgumentException("Order not found");
+        }
+        List<com.ecommerce.backend.entity.OrderItem> items = orderItemRepository.findByOrderIdWithProduct(orderId);
+        if (items == null || items.isEmpty()) {
+            items = orderItemRepository.findByOrderId(orderId);
+        }
+        if (items == null || items.isEmpty()) {
+            throw new IllegalArgumentException("Order has no items to restore");
+        }
+        Cart cart = cartRepository.findByUserIdWithItems(userId).orElseGet(() -> {
+            Cart c = Cart.builder().user(order.getUser()).build();
+            return cartRepository.save(c);
+        });
+        Cart freshCart = cartRepository.findByUserIdWithItems(userId).orElse(cart);
+        for (com.ecommerce.backend.entity.OrderItem oi : items) {
+            try {
+                Product product = oi.getProduct();
+                if (product == null) continue;
+                Product fresh = productRepository.findById(product.getId()).orElse(null);
+                if (fresh == null || fresh.getDeletedAt() != null) continue;
+                int qty = oi.getQuantity() != null ? oi.getQuantity() : 1;
+                if (qty <= 0) continue;
+                java.util.Optional<CartItem> existing = cartItemRepository.findByCartIdAndProductId(freshCart.getId(), fresh.getId());
+                if (existing.isPresent()) {
+                    CartItem ex = existing.get();
+                    int newQty = Math.min(99, ex.getQuantity() + qty);
+                    if (fresh.getStockQuantity() != null && newQty > fresh.getStockQuantity()) {
+                        newQty = fresh.getStockQuantity();
+                    }
+                    if (newQty > ex.getQuantity()) {
+                        ex.setQuantity(newQty);
+                        cartItemRepository.save(ex);
+                    }
+                } else {
+                    int saveQty = qty;
+                    if (fresh.getStockQuantity() != null && saveQty > fresh.getStockQuantity()) {
+                        saveQty = fresh.getStockQuantity();
+                    }
+                    if (saveQty <= 0) continue;
+                    CartItem ci = CartItem.builder().cart(freshCart).product(fresh).quantity(saveQty).build();
+                    cartItemRepository.save(ci);
+                    freshCart.getCartItems().add(ci);
+                }
+            } catch (Exception e) {
+                log.warn("Restore failed for orderItem {} order {}", oi.getId(), orderId, e);
+            }
+        }
+        CartResponse resp = cartService.getCart(userId);
+        log.info("Restored cart from order {} for user {} — now {} items", orderId, userId, resp.items().size());
+        return ResponseEntity.ok(resp);
     }
 }

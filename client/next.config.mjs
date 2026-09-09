@@ -13,10 +13,6 @@ const nextConfig = {
       },
       {
         protocol: "https",
-        hostname: "aida-public",
-      },
-      {
-        protocol: "https",
         hostname: "*.googleusercontent.com",
       },
       {

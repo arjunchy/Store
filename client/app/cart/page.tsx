@@ -2,7 +2,7 @@
 
 import { formatNPR } from "@/lib/format";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -18,18 +18,60 @@ export default function CartPage() {
 }
 
 function CartInner() {
-  const { cart, loading, setQty, removeFromCart, clearCart } = useCart();
+  const { cart, loading, setQty, removeFromCart, clearCart, refresh } = useCart();
   const { isAuthenticated } = useAuth();
   const { toggle: wishlistToggle, isWishlisted } = useWishlist();
   const router = useRouter();
   const [savedMap, setSavedMap] = useState<Record<string, boolean>>({});
   const [wishBusy, setWishBusy] = useState<string | null>(null);
-  // visible cart excludes saved-for-later items from checkout totals
+  const [restoring, setRestoring] = useState(false);
+  const [hasBackup, setHasBackup] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
   const visibleCart = cart.filter(i => !savedMap[i.id]);
   const subtotal = visibleCart.reduce((s,i)=> s + i.price * (i.qty ?? i.quantity ?? 0),0);
   const visibleCount = visibleCart.reduce((n,i)=> n + (i.qty ?? i.quantity ?? 0),0);
 
   const isEmpty = !loading && cart.length === 0;
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("apexcommerce_cart_backup");
+      if (raw) {
+        const b = JSON.parse(raw);
+        if (Array.isArray(b) && b.length > 0) setHasBackup(true);
+      }
+      const oid = localStorage.getItem("apexcommerce_last_order_id");
+      if (oid) setPendingOrderId(oid.replace(/^#/, ""));
+      const sid = (() => { try { return sessionStorage.getItem("apexcommerce_pending_order_id"); } catch { return null; } })();
+      if (sid) setPendingOrderId(sid);
+    } catch {}
+  }, []);
+
+  const handleRestore = async () => {
+    setRestoring(true);
+    try {
+      const { apiClient } = await import("@/lib/api-client");
+      const oid = pendingOrderId || (() => { try { return localStorage.getItem("apexcommerce_last_order_id")?.replace(/^#/, "") || sessionStorage.getItem("apexcommerce_pending_order_id") || ""; } catch { return ""; } })();
+      if (oid) {
+        try {
+          await apiClient.post(`/cart/restore-from-order/${oid}`, {}, { auth: true });
+          await refresh();
+          setHasBackup(false);
+          return;
+        } catch {}
+      }
+      const raw = localStorage.getItem("apexcommerce_cart_backup");
+      if (raw) {
+        const backup: any[] = JSON.parse(raw);
+        const { addToCart } = await import("@/lib/cart");
+        for (const it of backup) {
+          try { await addToCart({ id: it.product_id || it.id, product_id: it.product_id || it.id, name: it.name, price: it.price, image: it.image, qty: it.qty ?? it.quantity ?? 1, quantity: it.qty ?? it.quantity ?? 1 } as any); } catch {}
+        }
+        await refresh();
+        setHasBackup(false);
+      }
+    } finally { setRestoring(false); }
+  };
 
   if (loading) {
     return (
@@ -44,6 +86,48 @@ function CartInner() {
   }
 
   if (isEmpty) {
+    if (hasBackup) {
+      return (
+        <div className="min-h-screen flex flex-col bg-[#fafaf9]">
+          <Navbar />
+          <main className="flex-grow w-full px-margin-mobile md:px-margin-desktop max-w-[1440px] mx-auto py-xl md:py-xxl">
+            <div className="mb-lg">
+              <h1 className="font-headline-lg text-headline-lg text-[#1c1917] mb-xs font-semibold tracking-tight">Shopping Cart</h1>
+              <p className="font-body-md text-body-md text-[#57534e]">Your cart looks empty — but we saved your items from the last checkout.</p>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex gap-3">
+                <span className="w-10 h-10 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0"><span className="material-symbols-outlined">info</span></span>
+                <div>
+                  <p className="font-semibold text-[15px] text-amber-900">Payment didn&apos;t complete — your items are still saved</p>
+                  <p className="text-[13px] text-amber-800 mt-1">Your last order is UNPAID. Cart was not cleared. Restore to retry.</p>
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={handleRestore} disabled={restoring} className="px-6 py-3 bg-[#b45309] text-white rounded-full text-[14px] font-semibold hover:bg-[#92400e] disabled:opacity-50 flex items-center gap-1">
+                  {restoring ? <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span> : <span className="material-symbols-outlined text-[18px]">restore</span>} {restoring ? "Restoring..." : "Restore Cart"}
+                </button>
+                <Link href={pendingOrderId ? `/orders/${pendingOrderId}` : "/orders"} className="px-6 py-3 border border-amber-300 bg-white rounded-full text-[14px] font-semibold hover:bg-amber-50">View Order</Link>
+              </div>
+            </div>
+            <div className="glass-card rounded-3xl p-xl flex flex-col items-center justify-center text-center h-[320px]">
+              <div className="w-24 h-24 bg-[#b45309]/10 rounded-full flex items-center justify-center mb-6">
+                <span className="material-symbols-outlined text-[#b45309]" style={{ fontSize: "48px" }}>shopping_cart</span>
+              </div>
+              <h3 className="font-headline-md text-headline-md text-[#1c1917] mb-3 font-semibold">Cart temporarily empty</h3>
+              <p className="font-body-md text-body-md text-[#57534e] mb-6 max-w-[40ch]">Click Restore Cart to bring your items back, or continue shopping.</p>
+              <div className="flex gap-3 justify-center">
+                <button onClick={handleRestore} disabled={restoring} className="bg-[#b45309] text-white font-label-md text-[15px] px-8 py-4 rounded-full hover:bg-[#92400e] disabled:opacity-50 inline-flex items-center gap-2">
+                  {restoring ? "Restoring..." : "Restore Cart"} <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+                </button>
+                <Link href="/catalog" className="border border-[#d6d3d1] text-[#1c1917] font-label-md text-[15px] px-8 py-4 rounded-full hover:bg-[#fafaf9] inline-flex items-center gap-2">Start Shopping</Link>
+              </div>
+            </div>
+          </main>
+          <Footer />
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen flex flex-col bg-[#fafaf9]">
         <Navbar />

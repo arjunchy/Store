@@ -8,9 +8,15 @@ public record OrderRequest(
         String addressId,
         String paymentMethod,
         BigDecimal shipping,
-        BigDecimal tax
+        BigDecimal tax,
+        String shippingMethod,
+        String deliveryMethod
 ) {
     public OrderRequest(String addressId) {
-        this(addressId, null, null, null);
+        this(addressId, null, null, null, null, null);
+    }
+
+    public OrderRequest(String addressId, String paymentMethod, BigDecimal shipping, BigDecimal tax) {
+        this(addressId, paymentMethod, shipping, tax, null, null);
     }
 }

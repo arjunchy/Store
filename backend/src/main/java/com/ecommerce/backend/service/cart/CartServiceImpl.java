@@ -93,11 +93,12 @@ public class CartServiceImpl implements CartService {
         try {
             Cart cart = getOrCreateCart(userId);
 
-            Product product = productRepository.findById(request.productId())
-                    .orElseThrow(() -> {
-                        log.warn("Product not found with id: {}", request.productId());
-                        return new IllegalArgumentException("Product not found");
-                    });
+            Product product = productRepository.findByIdForUpdate(request.productId())
+                    .orElseGet(() -> productRepository.findById(request.productId())
+                            .orElseThrow(() -> {
+                                log.warn("Product not found with id: {}", request.productId());
+                                return new IllegalArgumentException("Product not found");
+                            }));
             if (product.getDeletedAt() != null) throw new IllegalArgumentException("Product not available");
             if (request.quantity() == null || request.quantity() <= 0) {
                 log.warn("Invalid quantity {} for addItem", request.quantity());
@@ -169,10 +170,14 @@ public class CartServiceImpl implements CartService {
                 cartItemRepository.delete(cartItem);
             } else {
                 if (quantity > 99) throw new IllegalArgumentException("Quantity must be <=99");
-                // stock check for update
+                // stock check for update — fetch fresh stock to prevent oversell via stale cartItem.product
                 Product p = cartItem.getProduct();
-                if (p != null && p.getStockQuantity() != null && quantity > p.getStockQuantity()) {
-                    throw new IllegalArgumentException("Insufficient stock: available " + p.getStockQuantity());
+                if (p != null) {
+                    Product freshStock = productRepository.findByIdForUpdate(p.getId())
+                            .orElseGet(() -> productRepository.findById(p.getId()).orElse(p));
+                    if (freshStock.getStockQuantity() != null && quantity > freshStock.getStockQuantity()) {
+                        throw new IllegalArgumentException("Insufficient stock: available " + freshStock.getStockQuantity());
+                    }
                 }
                 log.debug("Setting quantity {} for cartItemId: {}", quantity, cartItemId);
                 cartItem.setQuantity(quantity);

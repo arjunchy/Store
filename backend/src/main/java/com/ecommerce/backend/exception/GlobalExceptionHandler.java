@@ -2,8 +2,10 @@ package com.ecommerce.backend.exception;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -123,6 +125,18 @@ public class GlobalExceptionHandler {
         body.put("status", HttpStatus.CONFLICT.value());
         body.put("error", "Conflict");
         body.put("message", "Data conflict. Please retry or check the submitted values.");
+        body.put("path", request.getDescription(false));
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    @ExceptionHandler({ OptimisticLockingFailureException.class, ObjectOptimisticLockingFailureException.class, jakarta.persistence.OptimisticLockException.class })
+    public ResponseEntity<Map<String, Object>> handleOptimisticLock(Exception ex, WebRequest request) {
+        log.warn("Conflict - optimistic lock at {}: {}", request.getDescription(false), ex.getMessage());
+        Map<String, Object> body = new HashMap<>();
+        body.put("timestamp", LocalDateTime.now());
+        body.put("status", HttpStatus.CONFLICT.value());
+        body.put("error", "Conflict");
+        body.put("message", "Resource was modified concurrently. Please retry.");
         body.put("path", request.getDescription(false));
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }

@@ -119,8 +119,26 @@ function mapOrder(res: OrderResponse): Order {
   };
 }
 
+const orderImageCache = new Map<string, { url: string; ts: number }>();
+const ORDER_IMAGE_TTL = 60_000;
+async function getOrderCachedImage(pid: string): Promise<string> {
+  const cached = orderImageCache.get(pid);
+  if (cached && Date.now() - cached.ts < ORDER_IMAGE_TTL) return cached.url;
+  try {
+    const imgs = await apiClient.get<ProductImageResponse[]>(`/products/${pid}/images`, { auth: false });
+    if (!Array.isArray(imgs) || imgs.length === 0) return "";
+    const sorted = [...imgs].sort((a, b) => {
+      if (a.isPrimary && !b.isPrimary) return -1;
+      if (!a.isPrimary && b.isPrimary) return 1;
+      return (a.displayOrder ?? 0) - (b.displayOrder ?? 0);
+    });
+    const primary = sorted.find((i) => i.isPrimary)?.url || sorted[0]?.url || "";
+    if (primary) orderImageCache.set(pid, { url: primary, ts: Date.now() });
+    return primary;
+  } catch { return ""; }
+}
+
 async function hydrateOrderImages(orders: Order[]): Promise<Order[]> {
-  // Deduplicate product image fetches across all orders
   const pidSet = new Set<string>();
   for (const o of orders) for (const it of o.items) {
     const pid = it.product_id || it.productId || "";
@@ -128,21 +146,12 @@ async function hydrateOrderImages(orders: Order[]): Promise<Order[]> {
   }
   const pidList = Array.from(pidSet);
   const imageMap = new Map<string, string>();
-  await Promise.all(pidList.map(async (pid) => {
-    try {
-      const imgs = await apiClient.get<ProductImageResponse[]>(`/products/${pid}/images`, { auth: false });
-      if (!Array.isArray(imgs) || imgs.length === 0) return;
-      const sorted = [...imgs].sort((a, b) => {
-        if (a.isPrimary && !b.isPrimary) return -1;
-        if (!a.isPrimary && b.isPrimary) return 1;
-        return (a.displayOrder ?? 0) - (b.displayOrder ?? 0);
-      });
-      const primary = sorted.find((i) => i.isPrimary)?.url || sorted[0]?.url || "";
-      if (primary) imageMap.set(pid, primary);
-    } catch {
-      // silent
-    }
-  }));
+  const chunkSize = 6;
+  for (let i = 0; i < pidList.length; i += chunkSize) {
+    const chunk = pidList.slice(i, i + chunkSize);
+    const results = await Promise.all(chunk.map(async (pid) => ({ pid, url: await getOrderCachedImage(pid) })));
+    results.forEach(({ pid, url }) => { if (url) imageMap.set(pid, url); });
+  }
   return orders.map(order => ({
     ...order,
     items: order.items.map(it => {
@@ -190,6 +199,8 @@ export async function createOrder(params: {
   paymentMethod?: string;
   shipping?: number;
   tax?: number;
+  shippingMethod?: string;
+  deliveryMethod?: string;
 }): Promise<Order> {
   const res = await apiClient.post<OrderResponse>(
     "/orders",
@@ -198,6 +209,8 @@ export async function createOrder(params: {
       paymentMethod: params.paymentMethod,
       shipping: params.shipping,
       tax: params.tax,
+      shippingMethod: params.shippingMethod || params.deliveryMethod,
+      deliveryMethod: params.deliveryMethod || params.shippingMethod,
     },
     { auth: true }
   );

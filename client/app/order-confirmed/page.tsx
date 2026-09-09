@@ -51,6 +51,7 @@ function OrderConfirmedInner() {
   const { user } = useAuth();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [orderNumber, setOrderNumber] = useState<string>("");
+  const [livePaid, setLivePaid] = useState<boolean | null>(null);
 
   useEffect(() => {
     try {
@@ -61,6 +62,21 @@ function OrderConfirmedInner() {
       }
       const oid = localStorage.getItem("apexcommerce_last_order_id");
       if (oid) setOrderNumber(oid.startsWith("#") ? oid : `#${oid.slice(0, 8).toUpperCase()}`);
+    } catch {}
+    try {
+      const oid = localStorage.getItem("apexcommerce_last_order_id")?.replace(/^#/, "") || "";
+      const snapRaw = localStorage.getItem("apexcommerce_last_order_snapshot");
+      let sId = "";
+      if (snapRaw) { try { sId = JSON.parse(snapRaw).orderId || ""; } catch {} }
+      const targetId = sId || oid;
+      if (targetId) {
+        import("@/lib/api-client").then(({ apiClient }) => {
+          apiClient.get<any>(`/orders/${targetId}`, { auth: true }).then((o) => {
+            const ps = (o.paymentStatus || o.payment_status || "").toString().toUpperCase();
+            setLivePaid(ps === "PAID");
+          }).catch(() => setLivePaid(null));
+        });
+      }
     } catch {}
   }, []);
 
@@ -110,10 +126,17 @@ function OrderConfirmedInner() {
             <p className="font-body-lg text-body-lg text-[#57534e] max-w-xl mx-auto mt-3">
               {hasSnapshot ? <>Thank you{user?.username ? `, ${user.username.split(" ")[0]}` : ""} — we&apos;ve received your order and are getting it ready to ship. A confirmation email will arrive shortly.</> : "Your order is confirmed. Check Orders for live status."}
             </p>
-            <div className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#fafaf9] border border-[#d6d3d1] text-[12px] text-[#57534e]">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Order is being processed
+            <div className={`mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-[12px] ${livePaid === false ? "bg-amber-50 border-amber-200 text-amber-800" : "bg-[#fafaf9] border-[#d6d3d1] text-[#57534e]"}`}>
+              <span className={`w-2 h-2 rounded-full animate-pulse ${livePaid === false ? "bg-amber-500" : "bg-emerald-500"}`} /> {livePaid === false ? "Payment pending — complete payment in Orders" : "Order is being processed"}
               <span className="hidden sm:inline">• Track anytime in Orders</span>
             </div>
+            {livePaid === false && (
+              <div className="mt-3 max-w-xl mx-auto bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-[13px] text-amber-900 text-left">
+                <p className="font-semibold">Payment not yet confirmed</p>
+                <p className="text-[12px] text-amber-800 mt-1">Your order is saved as UNPAID. Your cart was preserved. Go to Orders to retry payment or restore cart if needed.</p>
+                <Link href="/orders" className="inline-flex mt-2 px-4 py-2 rounded-full bg-[#b45309] text-white text-[12px] font-semibold">Go to Orders — Pay Now</Link>
+              </div>
+            )}
           </div>
 
         <div className="max-w-3xl mx-auto">
@@ -121,7 +144,7 @@ function OrderConfirmedInner() {
             <div className="bg-white p-6 rounded-[16px] border border-[#d6d3d1] shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="font-semibold text-[16px] text-[#1c1917]">Order Details</h2>
-                <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold tracking-wide">PENDING</span>
+                <span className={`px-2 py-1 rounded-full text-[10px] font-bold tracking-wide border ${livePaid === false ? "bg-amber-50 text-amber-700 border-amber-200" : livePaid === true ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-[#fafaf9] text-[#57534e] border-[#d6d3d1]"}`}>{livePaid === false ? "UNPAID" : livePaid === true ? "PAID" : "PENDING"}</span>
               </div>
               <div className="space-y-2.5 text-[13px]">
                 <div className="flex justify-between items-center py-2 border-b border-surface-variant">
@@ -135,7 +158,7 @@ function OrderConfirmedInner() {
                 <div className="flex justify-between items-center py-2 border-b border-surface-variant">
                   <span className="text-[#57534e]">Payment</span>
                   <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-semibold border ${payment === "esewa" ? "bg-[#e6f6ee] border-[#a7e3c5] text-[#116a43]" : "bg-[#f3e8ff] border-[#d8b4fe] text-[#5C2D91]"}`}>
-                    <span className="material-symbols-outlined text-[14px]">{payment === "esewa" ? "account_balance_wallet" : "wallet"}</span> {payment === "esewa" ? "eSewa" : "Khalti"} • Paid
+                    <span className="material-symbols-outlined text-[14px]">{payment === "esewa" ? "account_balance_wallet" : "wallet"}</span> {payment === "esewa" ? "eSewa" : "Khalti"} • {livePaid === false ? "Unpaid" : livePaid === true ? "Paid" : "Pending"}
                   </span>
                 </div>
                 <div className="flex justify-between items-center py-2 border-b border-surface-variant">

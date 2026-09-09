@@ -59,40 +59,43 @@ export function setStoredUser(user: { id: string; username: string; email: strin
   }
 }
 
-let isRefreshing = false;
-let failedQueue: Array<{ resolve: (token: string) => void; reject: (err: unknown) => void }> = [];
-
-function processQueue(error: unknown, token: string | null) {
-  failedQueue.forEach((p) => {
-    if (error) p.reject(error);
-    else p.resolve(token!);
-  });
-  failedQueue = [];
-}
+let refreshPromise: Promise<string | null> | null = null;
 
 async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
+  if (refreshPromise) return refreshPromise;
 
-   try {
-     const res = await fetch(`${API_BASE}/auth/refresh`, {
-       method: "POST",
-       headers: { "Content-Type": "application/json" },
-       body: JSON.stringify({ refreshToken }),
-     });
-     if (!res.ok) {
-       clearTokens();
-       notifyAuthInvalid();
-       return null;
-     }
-     const data = await res.json();
-     setTokens(data.accessToken, data.refreshToken);
-     return data.accessToken;
-   } catch {
-     clearTokens();
-     notifyAuthInvalid();
-     return null;
-   }
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken }),
+      });
+      if (!res.ok) {
+        clearTokens();
+        notifyAuthInvalid();
+        return null;
+      }
+      const data = await res.json();
+      if (!data?.accessToken || !data?.refreshToken) {
+        clearTokens();
+        notifyAuthInvalid();
+        return null;
+      }
+      setTokens(data.accessToken, data.refreshToken);
+      return data.accessToken as string;
+    } catch {
+      clearTokens();
+      notifyAuthInvalid();
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 }
 
 export interface ApiError {
@@ -112,7 +115,7 @@ class ApiClient {
   ): Promise<T> {
     const isServer = !isBrowser();
     const base = isServer
-      ? process.env.NEXT_PUBLIC_API_URL || process.env.BACKEND_URL || "http://localhost:8080"
+      ? process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8081"
       : window.location.origin;
     const url = new URL(`${API_BASE}${path}`, base);
     if (options?.params) {
@@ -140,40 +143,21 @@ class ApiClient {
     });
 
     if (res.status === 401 && accessToken && options?.auth !== false) {
-      if (isRefreshing) {
-        return new Promise<T>((resolve, reject) => {
-          failedQueue.push({
-            resolve: (token: string) => {
-              headers["Authorization"] = `Bearer ${token}`;
-              fetch(url.toString(), { method, headers, body: body !== undefined ? (isFormData ? (body as FormData) : JSON.stringify(body)) : undefined })
-                .then((r) => handleResponse<T>(r))
-                .then(resolve)
-                .catch(reject);
-            },
-            reject,
-          });
-        });
+      const getBody = (): BodyInit | undefined => {
+        if (body === undefined) return undefined;
+        if (isFormData) return body as FormData;
+        return JSON.stringify(body);
+      };
+      const newToken = await refreshAccessToken();
+      if (!newToken) {
+        return handleResponse<T>(res);
       }
-
-      isRefreshing = true;
-      try {
-        const newToken = await refreshAccessToken();
-        if (!newToken) {
-          const err = new Error("Session expired — please sign in again") as Error & { status: number };
-          err.status = 401;
-          processQueue(err, null);
-          return handleResponse<T>(res);
-        }
-        processQueue(null, newToken);
-        headers["Authorization"] = `Bearer ${newToken}`;
-        res = await fetch(url.toString(), {
-          method,
-          headers,
-          body: body !== undefined ? (isFormData ? (body as FormData) : JSON.stringify(body)) : undefined,
-        });
-      } finally {
-        isRefreshing = false;
-      }
+      headers["Authorization"] = `Bearer ${newToken}`;
+      res = await fetch(url.toString(), {
+        method,
+        headers,
+        body: getBody(),
+      });
     }
 
     return handleResponse<T>(res);
