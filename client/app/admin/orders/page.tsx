@@ -9,7 +9,6 @@ import { orderAdminApi } from "@/lib/order-api";
 import { getOrderFullDetails } from "@/lib/admin";
 import { getStatusHistory } from "@/lib/order";
 import type { Order, OrderStatus, OrderStatusHistory, PaymentStatus, DeliveryStatus } from "@/lib/types";
-import { StatusControl } from "@/components/admin/OrderStatusControl";
 import OrderDrawer from "@/components/admin/orders/OrderDrawer";
 import { ORDER_STATUSES, DELIVERY_STATUSES, PAYMENT_STATUSES, ORDER_ALLOWED, DELIVERY_ALLOWED, PAYMENT_ALLOWED, getOrderStatusConfig, getPaymentStatusConfig, getDeliveryStatusConfig, isValidOrderTransition, isValidDeliveryTransition, isValidPaymentTransition, getDisabledReason } from "@/lib/statusConfig";
 
@@ -477,9 +476,7 @@ export default function AdminOrdersPage() {
                 </thead>
                 <tbody className="divide-y divide-[#e7e5e4]">
                   {orders.map((o) => {
-                    const allowed = ORDER_ALLOWED[o.status as string] ?? [];
                     const delivery = (o.delivery_status ?? (o as unknown as { deliveryStatus?: string }).deliveryStatus ?? "PLACED") as string;
-                    const allowedDelivery = DELIVERY_ALLOWED[delivery] ?? [];
                     const payment = (o.payment_status ?? (o as unknown as { paymentStatus?: string }).paymentStatus ?? "UNPAID") as string;
                     return (
                       <tr key={o.id} className="hover:bg-[#fafaf9] transition-colors cursor-pointer" onClick={() => openDetail(o.id)}>
@@ -493,29 +490,15 @@ export default function AdminOrdersPage() {
                             </div>
                           </button>
                         </td>
-                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                          <StatusControl
-                            orderId={o.id}
-                            current={o.status}
-                            allowed={allowed}
-                            allStatuses={ORDER_STATUSES as unknown as string[]}
-                            onChange={handleStatusChange as any}
-                            updatingId={updating}
-                            variant="order"
-                          />
+                        <td className="px-4 py-3">
+                          <StatusPill status={o.status} />
                         </td>
-                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                          <StatusControl
-                            orderId={o.id}
-                            current={delivery}
-                            allowed={allowedDelivery}
-                            allStatuses={DELIVERY_STATUSES as unknown as string[]}
-                            onChange={handleDeliveryChange as any}
-                            updatingId={updating}
-                            variant="delivery"
-                          />
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center px-2 py-1 rounded-lg border text-[11px] font-semibold ${getDeliveryStatusConfig(delivery).color}`}>
+                            {getDeliveryStatusConfig(delivery).label}
+                          </span>
                         </td>
-                         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                         <td className="px-4 py-3">
                             {isWalletOrder(o) && (payment === "UNPAID" || payment === "EXPIRED") ? (
                               <span className="inline-flex flex-col gap-1">
                                 <span className={`px-2 py-1 rounded-lg border text-[11px] font-semibold ${getPaymentStatusConfig(payment).color}`}>
@@ -526,31 +509,9 @@ export default function AdminOrdersPage() {
                                 </span>
                               </span>
                             ) : (
-                              <select
-                                value={payment}
-                                onChange={(e) => handlePaymentChange(o.id, e.target.value as PaymentStatus)}
-                                disabled={updating === o.id}
-                                title={isWalletOrder(o) ? "Wallet order – UNPAID→PAID is automatic via gateway; refunds can still be managed" : undefined}
-                                className="px-2 py-1 rounded-lg border border-[#d6d3d1] bg-[#fafaf9] text-[11px] font-semibold focus:border-[#b45309] outline-none disabled:opacity-50"
-                              >
-                                {PAYMENT_STATUSES.map((ps) => {
-                                  const isCurrent = ps === payment;
-                                  // Hide manual PAID target for wallet orders – gateway sets it
-                                  if (isWalletOrder(o) && ps === "PAID" && payment !== "PAID") return null;
-                                  const isValid = isValidPaymentTransition(payment, ps);
-                                  return (
-                                    <option
-                                      key={ps}
-                                      value={ps}
-                                      disabled={!isValid && !isCurrent}
-                                      title={!isValid && !isCurrent ? getDisabledReason(payment, ps) : undefined}
-                                    >
-                                      {getPaymentStatusConfig(ps).label}
-                                      {isCurrent ? " (current)" : !isValid ? " (disabled)" : ""}
-                                    </option>
-                                  );
-                                })}
-                              </select>
+                              <span className={`inline-flex items-center px-2 py-1 rounded-lg border text-[11px] font-semibold ${getPaymentStatusConfig(payment).color}`}>
+                                {getPaymentStatusConfig(payment).label}
+                              </span>
                             )}
                           </td>
                         <td className="px-4 py-3 text-[12px] text-[#57534e] max-w-[160px]">
@@ -667,14 +628,6 @@ export default function AdminOrdersPage() {
                       {fulfillmentSaving && <span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span>} Save Fulfillment
                     </button>
                     <p className="text-[10px] text-[#57534e]">Stored via <span className="font-mono">PATCH /orders/{"{id}"}/fulfillment</span>. Filling tracking when setting delivery to <span className="font-mono">SHIPPING</span> is recommended.</p>
-                  </div>
-
-                  <div className="bg-[#fef3c7]/10 border border-[#b45309]/20 rounded-xl p-3 flex gap-2.5">
-                    <span className="material-symbols-outlined text-[#b45309] text-[18px] shrink-0">account_tree</span>
-                    <div className="text-[11px] leading-relaxed text-[#57534e]">
-                      <p className="font-bold text-[#1c1917]">Workflow — Delivery drives Order</p>
-                      <p className="mt-1"><span className="font-mono bg-white px-1 py-0.5 rounded border text-[10px]">PLACED (PROCESSING/UNPAID)</span> → <span className="font-semibold">SHIPPING</span> → auto <span className="font-mono">CONFIRMED</span> → <span className="font-semibold">ARRIVED</span> → <span className="font-semibold">COLLECTED</span> → auto <span className="font-mono">COMPLETED</span>.</p>
-                    </div>
                   </div>
 
                   <div>
@@ -833,13 +786,6 @@ export default function AdminOrdersPage() {
           </div>
         </div>
       )}
-
-      <div className="bg-[#fef3c7]/20 border border-[#b45309]/20 rounded-xl p-4 flex items-start gap-2">
-        <span className="material-symbols-outlined text-[#b45309] text-[20px]">info</span>
-        <div className="text-[12px] text-[#57534e] leading-relaxed">
-          <p><span className="font-semibold text-[#1c1917]">Lifecycle:</span> <span className="font-mono">PROCESSING → CONFIRMED → SHIPPED → DELIVERED → COMPLETED</span> (or <span className="font-mono">CANCELED</span>) • <span className="font-mono">Delivery: PLACED→SHIPPING→ARRIVED→COLLECTED→RETURNING→RETURNED</span> auto-syncs Order: <span className="font-mono">SHIPPING→SHIPPED</span>, <span className="font-mono">COLLECTED→COMPLETED</span>. Deletion requires verification.</p>
-        </div>
-      </div>
 
       {deleteTarget && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
