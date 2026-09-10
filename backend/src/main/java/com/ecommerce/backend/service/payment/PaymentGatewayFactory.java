@@ -34,11 +34,6 @@ public class PaymentGatewayFactory {
             log.debug("No payment method provided, using simulated gateway");
             return simulatedGateway;
         }
-        // ESEWA/KHALTI are wallet methods simulated via same gateway for now
-        if (method == PaymentMethod.ESEWA || method == PaymentMethod.KHALTI) {
-            log.debug("Wallet method {} mapped to SIMULATED gateway", method);
-            return simulatedGateway;
-        }
         PaymentGateway gateway = gatewayMap.get(method);
         if (gateway != null) {
             log.debug("Found gateway for method: {}", method);

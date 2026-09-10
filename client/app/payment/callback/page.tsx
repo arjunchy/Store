@@ -6,6 +6,7 @@ import Link from "next/link";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { lookupKhalti } from "@/lib/payment";
+import { formatNPR } from "@/lib/format";
 import { useCart } from "@/context/CartContext";
 import { clearCartBackup } from "@/lib/cart-backup";
 import { clearCheckout } from "@/lib/checkout";
@@ -24,6 +25,14 @@ function CallbackInner() {
   const txnStatus = searchParams.get("status") || "";
   const amount = searchParams.get("amount") || searchParams.get("total_amount") || "";
   const transactionId = searchParams.get("transaction_id") || searchParams.get("tidx") || "";
+
+  // Khalti reports money in paisa (e.g. 97092) – display in rupees (Rs. 970.92).
+  function formatPaisaToRs(raw: unknown): string {
+    if (raw === "" || raw === null || raw === undefined) return "—";
+    const paisa = Number(raw);
+    if (!isFinite(paisa)) return "—";
+    return formatNPR(paisa / 100);
+  }
 
   useEffect(() => {
     if (!pidx) {
@@ -132,8 +141,8 @@ function CallbackInner() {
               <p className="text-[13px] text-[#57534e] mt-1">Your Khalti payment was verified. Order <span className="font-mono font-semibold text-[#1c1917]">{purchaseOrderId || detail?.purchase_order_id || ""}</span> is confirmed. Cart cleared.</p>
               <div className="mt-4 bg-[#fafaf9] rounded-xl p-3 text-left text-[12px] border border-[#e7e5e4]">
                 <div className="flex justify-between"><span className="text-[#57534e]">pidx</span><span className="font-mono text-[#1c1917]">{detail?.pidx || pidx}</span></div>
-                <div className="flex justify-between"><span className="text-[#57534e]">amount</span><span className="font-semibold">{detail?.total_amount ?? amount} paisa</span></div>
-                <div className="flex justify-between"><span className="text-[#57534e]">transaction_id</span><span className="font-mono">{detail?.transaction_id || transactionId || "—"}</span></div>
+                <div className="flex justify-between"><span className="text-[#57534e]">amount</span><span className="font-semibold">{formatPaisaToRs(detail?.total_amount ?? amount)}</span></div>
+                <div className="flex justify-between"><span className="text-[#57534e]">Transaction ID</span><span className="font-mono">{detail?.transaction_id || transactionId || "—"}</span></div>
                 <div className="flex justify-between"><span className="text-[#57534e]">status</span><span className="text-[#15803d] font-semibold">{detail?.status || "Completed"}</span></div>
               </div>
               <div className="flex gap-2 justify-center mt-6">

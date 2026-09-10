@@ -1,11 +1,12 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { verifyEsewaPayment } from "@/lib/payment";
+import { formatNPR } from "@/lib/format";
 import { useCart } from "@/context/CartContext";
 import { clearCartBackup } from "@/lib/cart-backup";
 import { clearCheckout } from "@/lib/checkout";
@@ -21,16 +22,28 @@ function CallbackInner() {
 
   const data = searchParams.get("data") || "";
 
+  // StrictMode (dev) double-invokes this effect with the same `data`, which
+  // used to fire two verify POSTs that raced on cart-clear (loser got a 409
+  // despite PAID). Share one request per `data` so only one POST is sent;
+  // both effect invocations await the same promise.
+  const verifyKeyRef = useRef<string>("");
+  const verifyReqRef = useRef<Promise<any> | null>(null);
+
   useEffect(() => {
     if (!data) {
       setStatus("failed");
       setError("Missing eSewa response data – payment not verified. Your order stays UNPAID.");
       return;
     }
+    if (verifyKeyRef.current !== data) {
+      verifyKeyRef.current = data;
+      verifyReqRef.current = null;
+    }
     let cancelled = false;
     async function verify() {
       try {
-        const res = await verifyEsewaPayment({ data });
+        if (!verifyReqRef.current) verifyReqRef.current = verifyEsewaPayment({ data });
+        const res = await verifyReqRef.current;
         if (cancelled) return;
         setDetail(res);
         const ps = String(res?.paymentStatus || res?.status || "").toUpperCase();
@@ -53,6 +66,8 @@ function CallbackInner() {
         }
       } catch (e: any) {
         if (!cancelled) {
+          // Allow a later retry to issue a fresh request instead of reusing the rejected one.
+          if (verifyKeyRef.current === data) verifyReqRef.current = null;
           setError(e?.data?.message || e?.message || "eSewa verification failed – order stays UNPAID. Retry from Orders.");
           setStatus("failed");
         }
@@ -101,7 +116,11 @@ function CallbackInner() {
 
   const orderId = detail?.orderId || detail?.order_id || "";
   const orderNumber = detail?.orderNumber || detail?.order_number || "";
-  const txnCode = detail?.transaction_code || detail?.transactionCode || "";
+  const txnCode = detail?.transaction_id || detail?.transaction_code || detail?.transactionCode || "";
+  const amountPaidRaw = detail?.amountPaid ?? detail?.total_amount ?? detail?.totalAmount ?? "";
+  const amountPaid = amountPaidRaw === "" || amountPaidRaw === null || amountPaidRaw === undefined || !isFinite(Number(amountPaidRaw))
+    ? "—"
+    : formatNPR(Number(amountPaidRaw));
 
   return (
     <div className="min-h-screen flex flex-col bg-[#fafaf9]">
@@ -122,7 +141,8 @@ function CallbackInner() {
               <h1 className="font-bold text-[22px] text-[#1c1917] mt-4">Payment Completed</h1>
               <p className="text-[13px] text-[#57534e] mt-1">Your eSewa payment was verified. Order <span className="font-mono font-semibold text-[#1c1917]">{orderNumber || orderId.slice(0, 8)}</span> is confirmed. Cart cleared.</p>
               <div className="mt-4 bg-[#fafaf9] rounded-xl p-3 text-left text-[12px] border border-[#e7e5e4]">
-                <div className="flex justify-between"><span className="text-[#57534e]">transaction_code</span><span className="font-mono text-[#1c1917]">{txnCode || "—"}</span></div>
+                <div className="flex justify-between"><span className="text-[#57534e]">Transaction ID</span><span className="font-mono text-[#1c1917]">{txnCode || "—"}</span></div>
+                <div className="flex justify-between"><span className="text-[#57534e]">Amount Paid</span><span className="font-semibold text-[#1c1917]">{amountPaid}</span></div>
                 <div className="flex justify-between"><span className="text-[#57534e]">status</span><span className="text-[#15803d] font-semibold">{detail?.status || "COMPLETE"}</span></div>
                 <div className="flex justify-between"><span className="text-[#57534e]">payment</span><span className="text-[#15803d] font-semibold">PAID</span></div>
               </div>

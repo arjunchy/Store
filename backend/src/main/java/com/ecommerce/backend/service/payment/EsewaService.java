@@ -47,10 +47,10 @@ public class EsewaService {
     @Value("${esewa.mode:test}")
     private String mode;
 
-    @Value("${esewa.test-gateway-url:https://rc-epay.esewa.com.np/epay/main}")
+    @Value("${esewa.test-gateway-url:https://rc-epay.esewa.com.np/api/epay/main/v2/form}")
     private String testGatewayUrl;
 
-    @Value("${esewa.prod-gateway-url:https://epay.esewa.com.np/epay/main}")
+    @Value("${esewa.prod-gateway-url:https://epay.esewa.com.np/api/epay/main/v2/form}")
     private String prodGatewayUrl;
 
     @Value("${esewa.test-status-url:https://rc-epay.esewa.com.np/api/epay/transaction/status/}")
@@ -238,11 +238,14 @@ public class EsewaService {
                 : orderRepository.findById(uuid).orElse(null);
         if (order == null) throw new IllegalArgumentException("Order not found for transaction " + uuid);
 
+        if (order.getPaymentStatus() == OrderPaymentStatus.PAID) {
+            return alreadyPaidResponse(order, payment, decoded);
+        }
+
         // If eSewa already told us it is NOT complete, record failure without terminal-locking retry
         if (status != null && !"COMPLETE".equalsIgnoreCase(status)) {
             if (payment != null) {
                 payment.setStatus(PaymentStatus.EXPIRED);
-                if (code != null) payment.setTransactionId(payment.getTransactionId());
                 paymentRepository.save(payment);
             }
             order.setPaymentStatus(OrderPaymentStatus.EXPIRED);
@@ -268,6 +271,16 @@ public class EsewaService {
         }
 
         // COMPLETE → auto PAID, no manual admin step
+        Order locked = orderRepository.findByIdForUpdate(order.getId()).orElse(null);
+        if (locked != null) {
+            order = locked;
+            Payment latest = paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId()).orElse(null);
+            if (latest != null) payment = latest;
+            if (order.getPaymentStatus() == OrderPaymentStatus.PAID
+                    || (payment != null && payment.getStatus() == PaymentStatus.PAID)) {
+                return alreadyPaidResponse(order, payment, decoded);
+            }
+        }
         String txnCode = code != null ? code : str(check.get("transaction_code"));
         if (payment != null) {
             payment.setStatus(PaymentStatus.PAID);
@@ -288,6 +301,7 @@ public class EsewaService {
         }
         orderRepository.save(order);
         log.info("eSewa COMPLETE for order {} – auto PAID", order.getId());
+        final String paidOrderId = order.getId();
         try {
             String uid = order.getUser() != null ? order.getUser().getUserId() : null;
             if (uid != null) {
@@ -296,19 +310,36 @@ public class EsewaService {
                         int size = cart.getCartItems().size();
                         cart.getCartItems().clear();
                         cartRepository.save(cart);
-                        log.info("Cleared {} cart items for user {} after eSewa PAID order {}", size, uid, order.getId());
+                        log.info("Cleared {} cart items for user {} after eSewa PAID order {}", size, uid, paidOrderId);
                     }
                 });
             }
         } catch (Exception ce) {
-            log.warn("Failed to clear cart after eSewa PAID order {}", order.getId(), ce);
+            log.warn("Failed to clear cart after eSewa PAID order {}", paidOrderId, ce);
         }
 
         Map<String, Object> out = new HashMap<>(check);
         out.put("orderId", order.getId());
         out.put("orderNumber", order.getOrderNumber());
         out.put("paymentStatus", OrderPaymentStatus.PAID.name());
-        out.put("transaction_code", txnCode);
+        out.put("transaction_id", txnCode);
+        out.put("amountPaid", fmt(order.getTotalAmount()));
+        return out;
+    }
+
+    private Map<String, Object> alreadyPaidResponse(Order order, Payment payment, Map<String, Object> decoded) {
+        log.info("eSewa verify for already-PAID order {} – idempotent success", order.getId());
+        Map<String, Object> out = new HashMap<>();
+        if (decoded != null) out.putAll(decoded);
+        out.put("orderId", order.getId());
+        out.put("orderNumber", order.getOrderNumber());
+        out.put("paymentStatus", OrderPaymentStatus.PAID.name());
+        out.put("status", "COMPLETE");
+        String txn = payment != null ? payment.getTransactionId() : null;
+        Optional<Payment> latest = paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId());
+        if (latest.isPresent() && latest.get().getTransactionId() != null) txn = latest.get().getTransactionId();
+        if (txn != null) out.put("transaction_id", txn);
+        out.put("amountPaid", fmt(order.getTotalAmount()));
         return out;
     }
 

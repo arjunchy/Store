@@ -49,16 +49,16 @@ class PaymentGatewayFactoryTest {
     }
 
     @Test
-    void getGateway_khalti_returnsSimulated() {
-        PaymentGateway result = factory.getGateway(PaymentMethod.KHALTI);
-
-        assertThat(result).isEqualTo(simulatedGateway);
+    void getGateway_khalti_throwsUnsupported() {
+        assertThatThrownBy(() -> factory.getGateway(PaymentMethod.KHALTI))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Unsupported payment method");
     }
 
     @Test
-    void getGateway_esewa_returnsSimulated() {
-        PaymentGateway result = factory.getGateway(PaymentMethod.ESEWA);
-
-        assertThat(result).isEqualTo(simulatedGateway);
+    void getGateway_esewa_throwsUnsupported() {
+        assertThatThrownBy(() -> factory.getGateway(PaymentMethod.ESEWA))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Unsupported payment method");
     }
 }
