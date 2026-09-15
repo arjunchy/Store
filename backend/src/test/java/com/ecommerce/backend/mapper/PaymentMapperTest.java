@@ -24,7 +24,7 @@ class PaymentMapperTest {
                 .id("pay-1")
                 .order(order)
                 .amount(new BigDecimal("150.00"))
-                .method(PaymentMethod.CREDIT_CARD)
+                .method(PaymentMethod.KHALTI)
                 .transactionId("TXN-123")
                 .status(PaymentStatus.COMPLETED)
                 .createdAt(now)
@@ -35,7 +35,7 @@ class PaymentMapperTest {
         assertThat(response.id()).isEqualTo("pay-1");
         assertThat(response.orderId()).isEqualTo("ord-1");
         assertThat(response.amount()).isEqualByComparingTo(new BigDecimal("150.00"));
-        assertThat(response.method()).isEqualTo("CREDIT_CARD");
+        assertThat(response.method()).isEqualTo("KHALTI");
         assertThat(response.transactionId()).isEqualTo("TXN-123");
         assertThat(response.status()).isEqualTo("COMPLETED");
         assertThat(response.createdAt()).isEqualTo(now);
@@ -73,7 +73,7 @@ class PaymentMapperTest {
                 .id("pay-3")
                 .order(order)
                 .amount(new BigDecimal("200.00"))
-                .method(PaymentMethod.PAYPAL)
+                .method(PaymentMethod.ESEWA)
                 .transactionId("TXN-456")
                 .status(PaymentStatus.FAILED)
                 .createdAt(LocalDateTime.now())
@@ -82,6 +82,6 @@ class PaymentMapperTest {
         PaymentResponse response = mapper.toResponse(payment);
 
         assertThat(response.status()).isEqualTo("FAILED");
-        assertThat(response.method()).isEqualTo("PAYPAL");
+        assertThat(response.method()).isEqualTo("ESEWA");
     }
 }

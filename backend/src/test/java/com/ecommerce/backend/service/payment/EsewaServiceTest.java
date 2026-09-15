@@ -217,7 +217,7 @@ class EsewaServiceTest {
 
     @Test
     void verify_missingDataAndUuid_throws() {
-        assertThatThrownBy(() -> esewaService.verify(null, "", null, null))
+        assertThatThrownBy(() -> esewaService.verify(null, "", null, null, "user-1"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("transaction_uuid is required");
     }
@@ -230,7 +230,7 @@ class EsewaServiceTest {
                 .thenReturn(Optional.empty());
         when(orderRepository.findById("missing")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> esewaService.verify(null, "missing", null, null))
+        assertThatThrownBy(() -> esewaService.verify(null, "missing", null, null, "user-1"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Order not found");
     }
@@ -241,7 +241,7 @@ class EsewaServiceTest {
         String json = objectMapper.writeValueAsString(Map.of("status", "COMPLETE"));
         String encodedData = Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
 
-        assertThatThrownBy(() -> esewaService.verify(encodedData, "ord-1", null, null))
+        assertThatThrownBy(() -> esewaService.verify(encodedData, "ord-1", null, null, "user-1"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid eSewa response data");
     }
@@ -265,7 +265,7 @@ class EsewaServiceTest {
         when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(responseEntity);
 
-        Map<String, Object> result = esewaService.verify(null, "ord-1", null, "500");
+        Map<String, Object> result = esewaService.verify(null, "ord-1", null, "500", "user-1");
 
         assertThat(result.get("status")).isEqualTo("PENDING");
         verify(paymentRepository, never()).save(any(Payment.class));
@@ -314,7 +314,7 @@ class EsewaServiceTest {
         when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(responseEntity);
 
-        Map<String, Object> result = esewaService.verify(encodedData, "ord-1", "TXN-ES-123", "500.00");
+        Map<String, Object> result = esewaService.verify(encodedData, "ord-1", "TXN-ES-123", "500.00", "user-1");
 
         assertThat(result.get("orderId")).isEqualTo("ord-1");
         assertThat(result.get("orderNumber")).isEqualTo("ORD-001");
@@ -343,7 +343,7 @@ class EsewaServiceTest {
         when(paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc("ord-1"))
                 .thenReturn(Optional.of(paidPayment));
 
-        Map<String, Object> result = esewaService.verify(null, "ord-1", null, "500");
+        Map<String, Object> result = esewaService.verify(null, "ord-1", null, "500", "user-1");
 
         assertThat(result.get("orderId")).isEqualTo("ord-1");
         assertThat(result.get("paymentStatus")).isEqualTo(OrderPaymentStatus.PAID.name());
@@ -395,7 +395,7 @@ class EsewaServiceTest {
         when(paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc("ord-1"))
                 .thenReturn(Optional.of(paidPayment));
 
-        Map<String, Object> result = esewaService.verify(null, "ord-1", null, "500");
+        Map<String, Object> result = esewaService.verify(null, "ord-1", null, "500", "user-1");
 
         assertThat(result.get("orderId")).isEqualTo("ord-1");
         assertThat(result.get("paymentStatus")).isEqualTo(OrderPaymentStatus.PAID.name());
@@ -405,6 +405,67 @@ class EsewaServiceTest {
         verify(paymentRepository, never()).save(any(Payment.class));
         verify(orderRepository, never()).save(any(Order.class));
         verify(cartRepository, never()).findByUserId(anyString());
+    }
+
+    @Test
+    void verify_wrongUser_throwsOrderNotFound() {
+        Payment existingPayment = Payment.builder()
+                .order(order)
+                .amount(new BigDecimal("500.00"))
+                .method(PaymentMethod.ESEWA)
+                .transactionId("ord-1")
+                .status(PaymentStatus.INITIATED)
+                .build();
+        when(paymentRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc("ord-1", PaymentStatus.INITIATED))
+                .thenReturn(Optional.of(existingPayment));
+
+        assertThatThrownBy(() -> esewaService.verify(null, "ord-1", null, "500", "user-2"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Order not found");
+        verify(restTemplate, never()).exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
+    }
+
+    @Test
+    void verify_callbackAmountMismatch_throws() throws Exception {
+        Payment existingPayment = Payment.builder()
+                .order(order)
+                .amount(new BigDecimal("500.00"))
+                .method(PaymentMethod.ESEWA)
+                .transactionId("ord-1")
+                .status(PaymentStatus.INITIATED)
+                .build();
+        when(paymentRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc("ord-1", PaymentStatus.INITIATED))
+                .thenReturn(Optional.of(existingPayment));
+
+        // Signed callback for a CHEAPER amount must never confirm the order,
+        // even though the signature itself is valid.
+        String signedFields = "total_amount,transaction_uuid,product_code";
+        String message = "total_amount=100.00,transaction_uuid=ord-1,product_code=EPAYTEST";
+        String signature = EsewaService.hmacSha256Base64(secretKey, message);
+
+        Map<String, Object> dataMap = new HashMap<>();
+        dataMap.put("transaction_uuid", "ord-1");
+        dataMap.put("transaction_code", "TXN-ES-999");
+        dataMap.put("status", "COMPLETE");
+        dataMap.put("total_amount", "100.00");
+        dataMap.put("product_code", "EPAYTEST");
+        dataMap.put("signed_field_names", signedFields);
+        dataMap.put("signature", signature);
+
+        String json = objectMapper.writeValueAsString(dataMap);
+        String encodedData = Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> esewaService.verify(encodedData, "ord-1", "TXN-ES-999", "100.00", "user-1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("amount mismatch");
+        verify(restTemplate, never()).exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
+    }
+
+    @Test
+    void verify_missingUserId_throws() {
+        assertThatThrownBy(() -> esewaService.verify(null, "ord-1", null, "500", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Authentication required");
     }
 
     @Test
@@ -425,7 +486,7 @@ class EsewaServiceTest {
         String json = objectMapper.writeValueAsString(dataMap);
         String encodedData = Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
 
-        assertThatThrownBy(() -> esewaService.verify(encodedData, "ord-1", "TXN-ES-123", "500.00"))
+        assertThatThrownBy(() -> esewaService.verify(encodedData, "ord-1", "TXN-ES-123", "500.00", "user-1"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("signature verification failed");
     }

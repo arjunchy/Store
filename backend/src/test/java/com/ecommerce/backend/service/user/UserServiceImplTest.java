@@ -6,6 +6,7 @@ import com.ecommerce.backend.dto.request.UserUpdateRequest;
 import com.ecommerce.backend.entity.User;
 import com.ecommerce.backend.enums.UserRole;
 import com.ecommerce.backend.mapper.UserMapper;
+import com.ecommerce.backend.repository.RefreshTokenRepository;
 import com.ecommerce.backend.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,9 @@ class UserServiceImplTest {
 
     @Mock
     private UserMapper userMapper;
+
+    @Mock
+    private RefreshTokenRepository refreshTokenRepository;
 
     @InjectMocks
     private UserServiceImpl userService;
@@ -77,7 +81,7 @@ class UserServiceImplTest {
 
     @Test
     void register_success_createsNewUser() {
-        when(userRepository.findByEmail("john@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailIncludingDeleted("john@example.com")).thenReturn(Optional.empty());
         User mapped = User.builder().username("john").email("john@example.com").build();
         when(userMapper.toEntity(registerRequest)).thenReturn(mapped);
         when(passwordEncoder.encode("password123")).thenReturn("encoded123");
@@ -94,7 +98,7 @@ class UserServiceImplTest {
 
     @Test
     void register_throwsWhenActiveEmailExists() {
-        when(userRepository.findByEmail("john@example.com")).thenReturn(Optional.of(activeUser));
+        when(userRepository.findByEmailIncludingDeleted("john@example.com")).thenReturn(Optional.of(activeUser));
 
         assertThatThrownBy(() -> userService.register(registerRequest))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -105,7 +109,9 @@ class UserServiceImplTest {
 
     @Test
     void register_reactivatesSoftDeletedUser() {
-        when(userRepository.findByEmail("deleted@example.com")).thenReturn(Optional.of(softDeletedUser));
+        // Soft-deleted rows are invisible to findByEmail (@SQLRestriction), so
+        // register must query including deleted rows to reach this path.
+        when(userRepository.findByEmailIncludingDeleted("deleted@example.com")).thenReturn(Optional.of(softDeletedUser));
         UserRequest req = new UserRequest("newname", "deleted@example.com", "newpass123");
         when(passwordEncoder.encode("newpass123")).thenReturn("encodedNew");
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -120,7 +126,7 @@ class UserServiceImplTest {
 
     @Test
     void register_setsRoleToUSER_evenIfMapperSetsOther() {
-        when(userRepository.findByEmail(anyString())).thenReturn(Optional.empty());
+        when(userRepository.findByEmailIncludingDeleted(anyString())).thenReturn(Optional.empty());
         User mapped = new User();
         mapped.setUsername("john");
         mapped.setEmail("john@example.com");
@@ -203,6 +209,7 @@ class UserServiceImplTest {
         assertThat(result.username()).isEqualTo("john2");
         verify(userRepository).save(argThat(u -> u.getUsername().equals("john2") && u.getPasswordHash().equals("hashed")));
         verify(passwordEncoder, never()).encode(anyString());
+        verify(refreshTokenRepository, never()).deleteAllByUserId(anyString());
     }
 
     @Test
@@ -216,6 +223,8 @@ class UserServiceImplTest {
         UserResponse result = userService.updateCurrentUser("john@example.com", req);
 
         assertThat(result.email()).isEqualTo("new@example.com");
+        // Credential change must kill all sessions carrying the old identity.
+        verify(refreshTokenRepository).deleteAllByUserId("uuid-1");
     }
 
     @Test

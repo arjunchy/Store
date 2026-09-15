@@ -4,6 +4,13 @@ import com.ecommerce.backend.config.CustomUserDetails;
 import com.ecommerce.backend.dto.request.CartItemRequest;
 import com.ecommerce.backend.dto.response.CartItemResponse;
 import com.ecommerce.backend.dto.response.CartResponse;
+import com.ecommerce.backend.entity.Order;
+import com.ecommerce.backend.entity.User;
+import com.ecommerce.backend.enums.DeliveryStatus;
+import com.ecommerce.backend.enums.OrderPaymentStatus;
+import com.ecommerce.backend.enums.OrderStatus;
+import com.ecommerce.backend.repository.OrderItemRepository;
+import com.ecommerce.backend.repository.OrderRepository;
 import com.ecommerce.backend.service.cart.CartService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +25,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -30,6 +38,12 @@ class CartControllerTest {
 
     @Mock
     private CartService cartService;
+
+    @Mock
+    private OrderRepository orderRepository;
+
+    @Mock
+    private OrderItemRepository orderItemRepository;
 
     @InjectMocks
     private CartController cartController;
@@ -138,5 +152,51 @@ class CartControllerTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody().items()).isEmpty();
+    }
+
+    private Order orderOwnedByUser(String orderId, OrderStatus status, OrderPaymentStatus paymentStatus) {
+        User user = User.builder().userId("user-1").username("john").email("john@example.com").build();
+        return Order.builder().id(orderId).user(user)
+                .status(status).paymentStatus(paymentStatus)
+                .deliveryStatus(DeliveryStatus.PLACED).build();
+    }
+
+    @Test
+    void restoreFromOrder_activePaidOrder_throws() {
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(orderRepository.findById("ord-1"))
+                .thenReturn(Optional.of(orderOwnedByUser("ord-1", OrderStatus.CONFIRMED, OrderPaymentStatus.PAID)));
+
+        assertThatThrownBy(() -> cartController.restoreFromOrder("ord-1", userDetails))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Only canceled, expired, or unpaid");
+        verify(orderItemRepository, never()).findByOrderIdWithProduct(anyString());
+    }
+
+    @Test
+    void restoreFromOrder_canceledOrder_passesStatusGate() {
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(orderRepository.findById("ord-1"))
+                .thenReturn(Optional.of(orderOwnedByUser("ord-1", OrderStatus.CANCELED, OrderPaymentStatus.EXPIRED)));
+        when(orderItemRepository.findByOrderIdWithProduct("ord-1")).thenReturn(List.of());
+        when(orderItemRepository.findByOrderId("ord-1")).thenReturn(List.of());
+
+        // No items → fails after the gate, proving the gate let it through.
+        assertThatThrownBy(() -> cartController.restoreFromOrder("ord-1", userDetails))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no items to restore");
+    }
+
+    @Test
+    void restoreFromOrder_unpaidOrder_passesStatusGate() {
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(orderRepository.findById("ord-1"))
+                .thenReturn(Optional.of(orderOwnedByUser("ord-1", OrderStatus.PROCESSING, OrderPaymentStatus.UNPAID)));
+        when(orderItemRepository.findByOrderIdWithProduct("ord-1")).thenReturn(List.of());
+        when(orderItemRepository.findByOrderId("ord-1")).thenReturn(List.of());
+
+        assertThatThrownBy(() -> cartController.restoreFromOrder("ord-1", userDetails))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no items to restore");
     }
 }

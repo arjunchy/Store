@@ -3,7 +3,6 @@ package com.ecommerce.backend.controller;
 import com.ecommerce.backend.config.CustomUserDetails;
 import com.ecommerce.backend.dto.request.EsewaVerifyRequest;
 import com.ecommerce.backend.dto.request.KhaltiLookupRequest;
-import com.ecommerce.backend.dto.request.PaymentRequest;
 import com.ecommerce.backend.dto.response.EsewaInitiateResponse;
 import com.ecommerce.backend.dto.response.KhaltiInitiateResponse;
 import com.ecommerce.backend.dto.response.PaymentResponse;
@@ -13,7 +12,6 @@ import com.ecommerce.backend.service.payment.PaymentService;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -34,52 +32,6 @@ public class PaymentController {
 
     @Autowired
     private EsewaService esewaService;
-
-    @PostMapping
-    public ResponseEntity<PaymentResponse> processPayment(
-            @Valid @RequestBody PaymentRequest request,
-            @AuthenticationPrincipal CustomUserDetails userDetails) {
-
-        String userId = userDetails.getUserId();
-
-        log.info(
-                "POST /api/payments - Processing payment for orderId: {} by userId: {}",
-                request.orderId(),
-                userId
-        );
-
-        try {
-            PaymentResponse response =
-                    paymentService.processPayment(request, userId);
-
-            log.info(
-                    "POST /api/payments - Payment processed with status: {} transactionId: {} for orderId: {}",
-                    response.status(),
-                    response.transactionId(),
-                    request.orderId()
-            );
-
-            return ResponseEntity
-                    .status(HttpStatus.CREATED)
-                    .body(response);
-
-        } catch (IllegalArgumentException e) {
-            log.warn(
-                    "POST /api/payments - Failed for orderId: {} - {}",
-                    request.orderId(),
-                    e.getMessage()
-            );
-            throw e;
-
-        } catch (Exception e) {
-            log.error(
-                    "POST /api/payments - Unexpected error for orderId: {}",
-                    request.orderId(),
-                    e
-            );
-            throw e;
-        }
-    }
 
     @GetMapping("/order/{orderId}")
     public ResponseEntity<List<PaymentResponse>> getPaymentsByOrder(
@@ -149,7 +101,7 @@ public class PaymentController {
             @Valid @RequestBody KhaltiLookupRequest request,
             @AuthenticationPrincipal CustomUserDetails userDetails) {
         log.info("POST /api/payments/khalti/lookup pidx={} userId={}", request.pidx(), userDetails.getUserId());
-        Map<String, Object> result = khaltiService.lookup(request.pidx());
+        Map<String, Object> result = khaltiService.lookup(request.pidx(), userDetails.getUserId());
         return ResponseEntity.ok(result);
     }
 
@@ -157,10 +109,15 @@ public class PaymentController {
     public ResponseEntity<Map<String, Object>> khaltiCallback(
             @RequestParam String pidx,
             @RequestParam(required = false) String status,
-            @RequestParam(required = false, name = "transaction_id") String transactionId) {
-        // Public callback support – frontend also calls lookup via POST, this is convenience
-        log.info("GET /api/payments/khalti/callback pidx={} status={}", pidx, status);
-        Map<String, Object> result = khaltiService.lookup(pidx);
+            @RequestParam(required = false, name = "transaction_id") String transactionId,
+            @AuthenticationPrincipal CustomUserDetails userDetails) {
+        // Authenticated callback — the caller must own the order. Previously this
+        // endpoint was public and mutated order state for any known pidx.
+        if (userDetails == null) {
+            throw new IllegalArgumentException("Authentication required");
+        }
+        log.info("GET /api/payments/khalti/callback pidx={} status={} userId={}", pidx, status, userDetails.getUserId());
+        Map<String, Object> result = khaltiService.lookup(pidx, userDetails.getUserId());
         return ResponseEntity.ok(result);
     }
 
@@ -182,8 +139,8 @@ public class PaymentController {
     public ResponseEntity<Map<String, Object>> verifyEsewa(
             @RequestBody EsewaVerifyRequest request,
             @AuthenticationPrincipal CustomUserDetails userDetails) {
-        log.info("POST /api/payments/esewa/verify uuid={} hasData={}",
-                request.transactionUuid(), request.data() != null && !request.data().isBlank());
+        log.info("POST /api/payments/esewa/verify uuid={} hasData={} userId={}",
+                request.transactionUuid(), request.data() != null && !request.data().isBlank(), userDetails.getUserId());
         Map<String, Object> result = esewaService.verify(
                 request.data(), request.transactionUuid(), request.transactionCode(), request.totalAmount());
         return ResponseEntity.ok(result);

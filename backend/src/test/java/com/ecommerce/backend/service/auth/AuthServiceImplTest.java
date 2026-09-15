@@ -101,20 +101,23 @@ class AuthServiceImplTest {
     }
 
     @Test
-    void login_unknownEmail_throwsUserNotFound() {
+    void login_unknownEmail_throwsGenericBadCredentials() {
+        // Unknown email must be indistinguishable from a wrong password
+        // (account-enumeration resistance): same type, same message, no email echo.
         AuthRequest request = new AuthRequest("ghost@example.com", "whatever");
         when(customUserDetailsService.doesUserExist("ghost@example.com")).thenReturn(false);
 
         assertThatThrownBy(() -> authService.login(request))
-                .isInstanceOf(com.ecommerce.backend.exception.UserNotFoundException.class)
-                .hasMessageContaining("No account found");
+                .isInstanceOf(BadCredentialsException.class)
+                .hasMessageContaining("Invalid email or password")
+                .hasMessageNotContaining("ghost@example.com");
 
         verify(authenticationManager, never()).authenticate(any());
         verify(jwtUtil, never()).generateAccessToken(any());
     }
 
     @Test
-    void login_badCredentials_propagatesException() {
+    void login_badCredentials_propagatesGenericException() {
         AuthRequest request = new AuthRequest("john@example.com", "wrong");
         when(customUserDetailsService.doesUserExist("john@example.com")).thenReturn(true);
         doThrow(new BadCredentialsException("Bad credentials"))
@@ -122,7 +125,8 @@ class AuthServiceImplTest {
 
         assertThatThrownBy(() -> authService.login(request))
                 .isInstanceOf(BadCredentialsException.class)
-                .hasMessageContaining("Invalid password");
+                .hasMessageContaining("Invalid email or password")
+                .hasMessageNotContaining("john@example.com");
 
         verify(jwtUtil, never()).generateAccessToken(any());
     }
@@ -251,8 +255,7 @@ class AuthServiceImplTest {
     }
 
     @Test
-    void refresh_extractUsernameCalledWithCorrectToken() {
-        String token = "my-refresh-token";
+    void refresh_extractUsernameCalledWithCorrectToken() {        String token = "my-refresh-token";
         RefreshTokenRequest request = new RefreshTokenRequest(token);
 
         RefreshToken dbToken = RefreshToken.builder()
@@ -274,5 +277,33 @@ class AuthServiceImplTest {
         authService.refresh(request);
 
         verify(jwtUtil).extractUsername(eq(token));
+    }
+
+    @Test
+    void refresh_reusedRevokedToken_revokesFamilyAndThrows() {
+        String token = "replayed-refresh";
+        RefreshTokenRequest request = new RefreshTokenRequest(token);
+
+        RefreshToken dbToken = RefreshToken.builder()
+                .id("9")
+                .token(token)
+                .revoked(true)
+                .expiryDate(LocalDateTime.now().plusDays(7))
+                .user(user)
+                .build();
+
+        when(jwtUtil.isRefreshToken(token)).thenReturn(true);
+        when(jwtUtil.extractUsername(token)).thenReturn("john@example.com");
+        when(customUserDetailsService.loadUserByUsername("john@example.com")).thenReturn(userDetails);
+        when(jwtUtil.isTokenValidRefresh(token, userDetails)).thenReturn(true);
+        when(refreshTokenRepository.findByTokenForUpdate(token)).thenReturn(Optional.of(dbToken));
+
+        assertThatThrownBy(() -> authService.refresh(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("revoked");
+
+        // Token-reuse must nuke the whole family so stolen siblings die too.
+        verify(refreshTokenService).revokeAllForUser("uuid-1");
+        verify(jwtUtil, never()).generateAccessToken(any());
     }
 }

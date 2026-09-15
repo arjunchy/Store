@@ -2,7 +2,6 @@ package com.ecommerce.backend.controller;
 
 import com.ecommerce.backend.config.CustomUserDetails;
 import com.ecommerce.backend.dto.request.EsewaVerifyRequest;
-import com.ecommerce.backend.dto.request.PaymentRequest;
 import com.ecommerce.backend.dto.response.EsewaInitiateResponse;
 import com.ecommerce.backend.dto.response.PaymentResponse;
 import com.ecommerce.backend.service.payment.EsewaService;
@@ -25,7 +24,6 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -49,43 +47,8 @@ class PaymentControllerTest {
     void setUp() {
         sampleResponse = new PaymentResponse(
                 "pay-1", "ord-1", new BigDecimal("500.00"),
-                "SIMULATED", "TXN-123", "COMPLETED", LocalDateTime.now()
+                "ESEWA", "TXN-123", "COMPLETED", LocalDateTime.now()
         );
-    }
-
-    @Test
-    void processPayment_success_returns201() {
-        when(userDetails.getUserId()).thenReturn("user-1");
-        PaymentRequest request = new PaymentRequest("ord-1", "SIMULATED", new BigDecimal("500.00"));
-        when(paymentService.processPayment(any(PaymentRequest.class), eq("user-1"))).thenReturn(sampleResponse);
-
-        ResponseEntity<PaymentResponse> response = paymentController.processPayment(request, userDetails);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        assertThat(response.getBody().id()).isEqualTo("pay-1");
-        assertThat(response.getBody().status()).isEqualTo("COMPLETED");
-        verify(paymentService).processPayment(request, "user-1");
-    }
-
-    @Test
-    void processPayment_orderNotFound_propagates() {
-        when(userDetails.getUserId()).thenReturn("user-1");
-        when(paymentService.processPayment(any(), eq("user-1"))).thenThrow(new IllegalArgumentException("Order not found"));
-
-        assertThatThrownBy(() -> paymentController.processPayment(
-                new PaymentRequest("missing", "SIMULATED", new BigDecimal("100")), userDetails))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    void processPayment_alreadyPaid_propagates() {
-        when(userDetails.getUserId()).thenReturn("user-1");
-        when(paymentService.processPayment(any(), eq("user-1"))).thenThrow(new IllegalArgumentException("Order already paid"));
-
-        assertThatThrownBy(() -> paymentController.processPayment(
-                new PaymentRequest("ord-1", "SIMULATED", new BigDecimal("100")), userDetails))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("already paid");
     }
 
     @Test
@@ -209,7 +172,8 @@ class PaymentControllerTest {
         verifyResult.put("orderId", "ord-1");
         verifyResult.put("paymentStatus", "PAID");
         verifyResult.put("transaction_id", "TXN-ES-123");
-        when(esewaService.verify("base64data", "ord-1", "TXN-ES-123", "500"))
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(esewaService.verify("base64data", "ord-1", "TXN-ES-123", "500", "user-1"))
                 .thenReturn(verifyResult);
 
         EsewaVerifyRequest request = new EsewaVerifyRequest("base64data", "ord-1", "TXN-ES-123", "500");
@@ -219,12 +183,13 @@ class PaymentControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody().get("status")).isEqualTo("COMPLETE");
         assertThat(response.getBody().get("paymentStatus")).isEqualTo("PAID");
-        verify(esewaService).verify("base64data", "ord-1", "TXN-ES-123", "500");
+        verify(esewaService).verify("base64data", "ord-1", "TXN-ES-123", "500", "user-1");
     }
 
     @Test
     void verifyEsewa_signatureFailed_propagates() {
-        when(esewaService.verify(any(), any(), any(), any()))
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(esewaService.verify(any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("eSewa signature verification failed"));
 
         EsewaVerifyRequest request = new EsewaVerifyRequest("base64data", "ord-1", "TXN-ES-123", "500");
@@ -240,7 +205,8 @@ class PaymentControllerTest {
         verifyResult.put("status", "PENDING");
         verifyResult.put("orderId", "ord-1");
         verifyResult.put("paymentStatus", "UNPAID");
-        when(esewaService.verify(null, "ord-1", null, "500"))
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(esewaService.verify(null, "ord-1", null, "500", "user-1"))
                 .thenReturn(verifyResult);
 
         EsewaVerifyRequest request = new EsewaVerifyRequest(null, "ord-1", null, "500");

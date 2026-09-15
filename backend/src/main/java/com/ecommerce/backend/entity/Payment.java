@@ -24,7 +24,7 @@ import java.time.LocalDateTime;
 public class Payment {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
+    @GeneratedValue(strategy = GenerationType.AUTO)
     @Column(columnDefinition = "CHAR(36)")
     private String id;
 
@@ -54,6 +54,14 @@ public class Payment {
     @Column(nullable = false, length = 16)
     @Builder.Default
     private PaymentStatus status = PaymentStatus.UNPAID;
+
+    @Lob
+    @Column(name = "request_body", columnDefinition = "TEXT")
+    private String requestBody;
+
+    @Lob
+    @Column(name = "response_body", columnDefinition = "TEXT")
+    private String responseBody;
 
     @CreationTimestamp
     private LocalDateTime createdAt;

@@ -1,0 +1,12 @@
+# JWT
+JWT_SECRET=your JWT secret key
+JWT_EXPIRATION=your JWT expiration time in milliseconds
+JWT_REFRESH_EXPIRATION=your JWT refresh expiration time in milliseconds
+
+# MySQL
+DB_URL=your database URL
+DB_USERNAME=your database username
+DB_PASSWORD=your database password
+
+# KHALTI
+KHALTI_SECRET_KEY=your Khalti secret key
