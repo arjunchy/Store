@@ -15,6 +15,8 @@ import { useAuth } from "@/context/AuthContext";
 import { useWishlist } from "@/context/WishlistContext";
 import { getReviewsByProduct, submitReview, updateReview, deleteReview } from "@/lib/review";
 import { getCategories } from "@/lib/category";
+import Toast, { type ToastNotice } from "@/components/Toast";
+import { lowStockMessage, outOfStockMessage, parseStockError } from "@/lib/stock";
 import type { Review } from "@/lib/types";
 
 export default function ProductClient({ product }: { product: Product }) {
@@ -35,7 +37,8 @@ export default function ProductClient({ product }: { product: Product }) {
   const [editComment, setEditComment] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
-  const { addToCart } = useCart();
+  const { addToCart, cart } = useCart();
+  const [notice, setNotice] = useState<ToastNotice | null>(null);
   const { isAuthenticated, user } = useAuth();
   const { isWishlisted, toggle } = useWishlist();
   const wishlist = isWishlisted(product.id);
@@ -96,7 +99,19 @@ export default function ProductClient({ product }: { product: Product }) {
 
   const avgRating = reviews.length > 0 ? Math.round((reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) * 10) / 10 : 0;
 
-  const handleAddToCart = async () => {
+  const handleAddToCart = async (): Promise<boolean> => {
+    const stock = product.stock_quantity ?? product.stockQuantity ?? 0;
+    if (stock <= 0) {
+      setNotice({ type: "error", message: outOfStockMessage(product.name) });
+      return false;
+    }
+    const inCart = cart.find((c) => (c.product_id || c.slug) === product.id);
+    const inCartQty = inCart?.qty ?? inCart?.quantity ?? 0;
+    const wanted = Math.min(qty, stock);
+    if (inCartQty + wanted > stock) {
+      setNotice({ type: "error", message: lowStockMessage(product.name, stock, inCartQty) });
+      return false;
+    }
     try {
       await addToCart({
         id: product.id,
@@ -105,17 +120,21 @@ export default function ProductClient({ product }: { product: Product }) {
         name: product.name,
         price: product.price,
         image: mainImgUrl,
-        qty,
+        qty: wanted,
       } as unknown as Omit<CartItem, "qty"> & { qty?: number });
       setAdded(true);
       setTimeout(() => setAdded(false), 2000);
+      return true;
     } catch (err: unknown) {
       const status = (err as { status?: number })?.status;
       if (status === 401 || status === 403) {
         router.push(`/login?next=${encodeURIComponent(`/product/${product.id}`)}`);
-      } else {
-        console.error("[product] addToCart failed", err);
+        return false;
       }
+      const stockMsg = parseStockError(err);
+      setNotice({ type: "error", message: stockMsg ?? `Failed to add ${product.name} to cart` });
+      console.error("[product] addToCart failed", err);
+      return false;
     }
   };
 
@@ -140,10 +159,18 @@ export default function ProductClient({ product }: { product: Product }) {
     }
   };
 
-  const handleBuyNow = () => {
-    handleAddToCart()
-      .then(() => router.push("/cart"))
-      .catch(() => {});
+  const handleBuyNow = async () => {
+    const stock = product.stock_quantity ?? product.stockQuantity ?? 0;
+    if (stock <= 0) {
+      setNotice({ type: "error", message: outOfStockMessage(product.name) });
+      return;
+    }
+    try {
+      const ok = await handleAddToCart();
+      if (ok) router.push("/cart");
+    } catch {
+      // handleAddToCart already surfaced the error notification
+    }
   };
 
   const handleSubmitReview = async () => {
@@ -240,6 +267,7 @@ export default function ProductClient({ product }: { product: Product }) {
           {wishlistToast?.startsWith("Added") && <Link href="/wishlist" className="ml-2 underline decoration-white/40 hover:decoration-white">View</Link>}
         </div>
       </div>
+      <Toast notice={notice} onClose={() => setNotice(null)} />
 
       <main className="flex-grow w-full max-w-[1440px] mx-auto px-margin-mobile md:px-margin-desktop py-xl">
         <div className="flex items-center gap-1 font-body-sm text-body-sm text-[#57534e] mb-6 flex-wrap">
@@ -369,7 +397,7 @@ export default function ProductClient({ product }: { product: Product }) {
                 </button>
               </div>
               <div className="flex gap-3 h-12">
-                <button onClick={handleBuyNow} className="flex-1 bg-[#ff9f00] text-white font-semibold text-[14px] rounded-lg flex items-center justify-center hover:bg-[#fb8c00] transition-colors shadow-sm">Buy Now</button>
+                <button onClick={handleBuyNow} disabled={stockQuantity <= 0} title={stockQuantity <= 0 ? outOfStockMessage(product.name) : `Buy ${product.name} now`} className="flex-1 bg-[#ff9f00] text-white font-semibold text-[14px] rounded-lg flex items-center justify-center hover:bg-[#fb8c00] transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">{stockQuantity <= 0 ? "Out of Stock" : "Buy Now"}</button>
                 <button onClick={handleWishlist} disabled={wishlistBusy} aria-label="Wishlist" className={`w-12 h-12 border rounded-lg flex items-center justify-center shadow-sm hover:-translate-y-px transition-all disabled:opacity-50 ${wishlist ? "bg-[#fee2e2] border-error text-[#b91c1c]" : "bg-white border-[#d6d3d1] text-[#57534e] hover:text-[#b45309] hover:border-[#b45309]"}`} title={isAuthenticated ? (wishlist ? "Remove from wishlist" : "Add to wishlist") : "Sign in to wishlist"}>
                   {wishlistBusy ? <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span> : <span className="material-symbols-outlined" style={{ fontVariationSettings: `'FILL' ${wishlist ? 1 : 0}` }}>favorite</span>}
                 </button>

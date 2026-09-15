@@ -40,10 +40,15 @@ function CartInner() {
         const b = JSON.parse(raw);
         if (Array.isArray(b) && b.length > 0) setHasBackup(true);
       }
+      // Backend addresses orders by UUID id. Older clients stored the
+      // human-readable orderNumber (ORD-…) here — ignore such legacy values
+      // so restore-by-id and /orders/:id links are never built from them.
+      const isOrderUuid = (v: string | null) =>
+        !!v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.replace(/^#/, ""));
       const oid = localStorage.getItem("apexcommerce_last_order_id");
-      if (oid) setPendingOrderId(oid.replace(/^#/, ""));
+      if (isOrderUuid(oid)) setPendingOrderId(oid!.replace(/^#/, ""));
       const sid = (() => { try { return sessionStorage.getItem("apexcommerce_pending_order_id"); } catch { return null; } })();
-      if (sid) setPendingOrderId(sid);
+      if (isOrderUuid(sid)) setPendingOrderId(sid!.replace(/^#/, ""));
     } catch {}
   }, []);
 
@@ -51,7 +56,14 @@ function CartInner() {
     setRestoring(true);
     try {
       const { apiClient } = await import("@/lib/api-client");
-      const oid = pendingOrderId || (() => { try { return localStorage.getItem("apexcommerce_last_order_id")?.replace(/^#/, "") || sessionStorage.getItem("apexcommerce_pending_order_id") || ""; } catch { return ""; } })();
+      const oid = pendingOrderId || (() => {
+        try {
+          const stored = localStorage.getItem("apexcommerce_last_order_id")?.replace(/^#/, "")
+            || sessionStorage.getItem("apexcommerce_pending_order_id") || "";
+          // Ignore legacy orderNumber values — backend restore needs the UUID id.
+          return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(stored) ? stored : "";
+        } catch { return ""; }
+      })();
       if (oid) {
         try {
           await apiClient.post(`/cart/restore-from-order/${oid}`, {}, { auth: true });

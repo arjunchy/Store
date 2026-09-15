@@ -85,11 +85,14 @@ export default function NewArrivalsPage() {
               const img = getMainImg(p);
               const wishlisted = isWishlisted(p.id);
               const busy = wishlistBusy === p.id;
+              const stock = p.stock_quantity ?? p.stockQuantity ?? 0;
+              const outOfStock = stock <= 0;
               return (
                 <div key={p.id} className="bg-white rounded-xl border border-[#d6d3d1] shadow-sm overflow-hidden hover:shadow-md transition-all flex flex-col relative">
                   <Link href={`/product/${p.id}`} className="h-48 relative bg-[#fafaf9] flex items-center justify-center overflow-hidden">
-                    {img ? <Image src={img} alt={p.name} fill unoptimized className="object-cover" sizes="300px" /> : <span className="material-symbols-outlined text-[#a8a29e] text-[48px]">image</span>}
+                    {img ? <Image src={img} alt={p.name} fill unoptimized className={`object-cover ${outOfStock ? "opacity-60 grayscale" : ""}`} sizes="300px" /> : <span className="material-symbols-outlined text-[#a8a29e] text-[48px]">image</span>}
                     <span className="absolute top-2 left-2 bg-[#b45309] text-white text-[10px] font-bold px-2 py-1 rounded-full">NEW</span>
+                    {outOfStock && <span className="absolute bottom-2 left-2 bg-[#b91c1c] text-white text-[10px] font-bold px-2 py-1 rounded-full">OUT OF STOCK</span>}
                   </Link>
                   <button
                     onClick={() => handleWishlist(p)}

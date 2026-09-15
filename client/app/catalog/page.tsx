@@ -14,6 +14,8 @@ import type { Product, Category } from "@/lib/types";
 import { useCart } from "@/context/CartContext";
 import { useWishlist } from "@/context/WishlistContext";
 import { useAuth } from "@/context/AuthContext";
+import Toast, { type ToastNotice } from "@/components/Toast";
+import { getStockQuantity, lowStockMessage, outOfStockMessage, parseStockError } from "@/lib/stock";
 
 const formatUSD = formatNPR;
 function getMainImg(p: Product) {
@@ -31,13 +33,15 @@ function getMainImg(p: Product) {
 export default function CatalogPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { addToCart } = useCart();
+  const { addToCart, cart } = useCart();
   const { isWishlisted, toggle } = useWishlist();
   const { isAuthenticated } = useAuth();
   const [wishlistBusy, setWishlistBusy] = useState<string | null>(null);
   const [cartBusy, setCartBusy] = useState<string | null>(null);
-  const [cartToast, setCartToast] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ToastNotice | null>(null);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
+
+  const showNotice = useCallback((n: ToastNotice) => setNotice(n), []);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [total, setTotal] = useState(0);
@@ -121,6 +125,17 @@ export default function CatalogPage() {
 
   const handleAdd = async (p: Product) => {
     if (cartBusy) return;
+    const stock = getStockQuantity(p);
+    if (stock <= 0) {
+      showNotice({ type: "error", message: outOfStockMessage(p.name) });
+      return;
+    }
+    const inCart = cart.find((c) => (c.product_id || c.slug) === p.id);
+    const inCartQty = inCart?.qty ?? inCart?.quantity ?? 0;
+    if (inCartQty + 1 > stock) {
+      showNotice({ type: "error", message: lowStockMessage(p.name, stock, inCartQty) });
+      return;
+    }
     setCartBusy(p.id);
     try {
       await addToCart({
@@ -132,17 +147,16 @@ export default function CatalogPage() {
         image: getMainImg(p),
         qty: 1,
       } as any);
-      setCartToast(p.name);
+      showNotice({ type: "success", message: `Added ${p.name} to cart`, actionHref: "/cart", actionLabel: "View" });
       setAddedIds((s) => new Set(s).add(p.id));
-      setTimeout(() => setCartToast(null), 2500);
       setTimeout(() => setAddedIds((s) => { const n = new Set(s); n.delete(p.id); return n; }), 2000);
     } catch (err: unknown) {
       const status = (err as { status?: number })?.status;
       if (status === 401 || status === 403) {
         router.push(`/login?next=${encodeURIComponent("/catalog")}`);
       } else {
-        setCartToast(`Failed to add ${p.name}`);
-        setTimeout(() => setCartToast(null), 2500);
+        const stockMsg = parseStockError(err);
+        showNotice({ type: "error", message: stockMsg ?? `Failed to add ${p.name}` });
       }
       console.error("[catalog] addToCart failed", err);
     } finally {
@@ -171,13 +185,7 @@ export default function CatalogPage() {
   return (
     <div className="min-h-screen flex flex-col bg-[#fafaf9]">
       <Navbar />
-      <div className={`fixed bottom-6 right-6 z-50 transition-all duration-300 ${cartToast ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0 pointer-events-none"}`}>
-        <div className="bg-[#0c0a09] text-white rounded-xl px-4 py-3 shadow-xl flex items-center gap-3 text-[13px] font-medium max-w-[320px]">
-          <span className="material-symbols-outlined text-[18px] text-white">check_circle</span>
-          <span className="line-clamp-1 flex-1">{cartToast?.startsWith("Failed") ? cartToast : `Added ${cartToast} to cart`}</span>
-          <Link href="/cart" className="ml-2 underline decoration-white/40 hover:decoration-white shrink-0">View</Link>
-        </div>
-      </div>
+      <Toast notice={notice} onClose={() => setNotice(null)} />
       <main className="flex-grow w-full max-w-[1440px] mx-auto px-margin-mobile md:px-margin-desktop py-xl">
         <div className="flex flex-col lg:flex-row gap-6">
           <aside className="w-full lg:w-72 shrink-0">
@@ -334,15 +342,20 @@ export default function CatalogPage() {
                     const img = getMainImg(p);
                     const wishlisted = isWishlisted(p.id);
                     const busy = wishlistBusy === p.id;
+                    const stock = getStockQuantity(p);
+                    const outOfStock = stock <= 0;
+                    const lowStock = stock > 0 && stock < 10;
                     return (
                       <div key={p.id} className="bg-white rounded-xl border border-[#d6d3d1] shadow-sm overflow-hidden hover:shadow-md hover:-translate-y-1 transition-all flex flex-col relative">
                         <Link href={`/product/${p.id}`} className="h-56 relative bg-[#fafaf9] flex items-center justify-center overflow-hidden">
                           {img ? (
-                            <Image src={img} alt={p.name} fill unoptimized className="object-cover" sizes="300px" onError={(e) => {(e.target as HTMLImageElement).style.display = "none";}} />
+                            <Image src={img} alt={p.name} fill unoptimized className={`object-cover ${outOfStock ? "opacity-60 grayscale" : ""}`} sizes="300px" onError={(e) => {(e.target as HTMLImageElement).style.display = "none";}} />
                           ) : (
                             <span className="material-symbols-outlined text-[#a8a29e] text-[48px]">image</span>
                           )}
                           {p.is_new_arrival && <span className="absolute top-2 left-2 bg-[#b45309] text-white text-[10px] font-bold px-2 py-1 rounded-full">NEW</span>}
+                          {outOfStock && <span className="absolute top-2 left-2 bg-[#b91c1c] text-white text-[10px] font-bold px-2 py-1 rounded-full">OUT OF STOCK</span>}
+                          {!outOfStock && lowStock && <span className="absolute top-2 left-2 bg-[#b91c1c] text-white text-[10px] font-bold px-2 py-1 rounded-full">ONLY {stock} LEFT</span>}
                           {p.images && p.images.length > 1 && <span className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full">+{p.images.length - 1}</span>}
                         </Link>
                         <button
@@ -367,16 +380,17 @@ export default function CatalogPage() {
                               ))}
                             </div>
                             <span className="text-[11px] text-[#57534e]">({p.review_count ?? 0})</span>
-                            <span className="ml-auto text-[11px] font-mono text-[#57534e]">Stock: {p.stock_quantity ?? 0}</span>
+                            <span className={`ml-auto text-[11px] font-mono ${outOfStock ? "text-[#b91c1c] font-bold" : "text-[#57534e]"}`}>{outOfStock ? "Out of stock" : `Stock: ${stock}`}</span>
                           </div>
                           <div className="flex items-center justify-between pt-2 border-t border-[#e7e5e4]">
                             <span className="font-bold text-[16px] text-[#b45309]">{formatUSD(p.price)}</span>
                             <button
                               onClick={() => handleAdd(p)}
-                              disabled={cartBusy === p.id}
-                              className={`px-3 py-2 rounded-xl text-[12px] font-semibold flex items-center gap-1 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${addedIds.has(p.id) ? "bg-[#15803d] text-white" : "bg-[#b45309] text-white hover:bg-[#92400e]"}`}
+                              disabled={cartBusy === p.id || outOfStock}
+                              title={outOfStock ? outOfStockMessage(p.name) : `Add ${p.name} to cart`}
+                              className={`px-3 py-2 rounded-xl text-[12px] font-semibold flex items-center gap-1 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${addedIds.has(p.id) ? "bg-[#15803d] text-white" : outOfStock ? "bg-[#e7e5e4] text-[#a8a29e]" : "bg-[#b45309] text-white hover:bg-[#92400e]"}`}
                             >
-                              {cartBusy === p.id ? <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span> : addedIds.has(p.id) ? <span className="material-symbols-outlined text-[14px]">check</span> : <span className="material-symbols-outlined text-[14px]">add_shopping_cart</span>} {cartBusy === p.id ? "Adding…" : addedIds.has(p.id) ? "Added ✓" : "Add"}
+                              {cartBusy === p.id ? <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span> : addedIds.has(p.id) ? <span className="material-symbols-outlined text-[14px]">check</span> : <span className="material-symbols-outlined text-[14px]">{outOfStock ? "block" : "add_shopping_cart"}</span>} {cartBusy === p.id ? "Adding…" : addedIds.has(p.id) ? "Added ✓" : outOfStock ? "Out of Stock" : "Add"}
                             </button>
                           </div>
                         </div>

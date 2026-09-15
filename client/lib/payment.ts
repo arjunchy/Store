@@ -42,23 +42,6 @@ export async function getPaymentByOrder(orderId: string): Promise<Payment | null
   return list[0] ?? null;
 }
 
-export async function createPayment(params: {
-  orderId: string;
-  method: string;
-  amount: number;
-}): Promise<Payment> {
-  const res = await apiClient.post<PaymentResponse>(
-    "/payments",
-    {
-      orderId: params.orderId,
-      method: params.method,
-      amount: params.amount,
-    },
-    { auth: true }
-  );
-  return mapPayment(res);
-}
-
 export type KhaltiInitiateResponse = {
   pidx: string;
   paymentUrl: string;

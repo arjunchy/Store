@@ -10,6 +10,8 @@ import type { Product } from "@/lib/types";
 import { useWishlist } from "@/context/WishlistContext";
 import { useAuth } from "@/context/AuthContext";
 import { useCart } from "@/context/CartContext";
+import Toast, { type ToastNotice } from "@/components/Toast";
+import { getStockQuantity, lowStockMessage, outOfStockMessage, parseStockError } from "@/lib/stock";
 
 function getMainImage(product: Product): string {
   const imgs = product.images ?? [];
@@ -23,16 +25,18 @@ function getMainImage(product: Product): string {
   return sorted.find((i) => i.is_primary ?? i.isPrimary)?.url || sorted[0]?.url || product.image || "";
 }
 
-function ProductCard({ product }: { product: Product }) {
+function ProductCard({ product, onStockError }: { product: Product; onStockError: (message: string) => void }) {
   const mainImg = getMainImage(product);
   const { isWishlisted, toggle } = useWishlist();
   const { isAuthenticated } = useAuth();
-  const { addToCart } = useCart();
+  const { addToCart, cart } = useCart();
   const router = useRouter();
   const [toggling, setToggling] = useState(false);
   const [cartBusy, setCartBusy] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
   const wishlisted = isWishlisted(product.id);
+  const stock = getStockQuantity(product);
+  const outOfStock = stock <= 0;
 
   const handleWishlist = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -58,6 +62,16 @@ function ProductCard({ product }: { product: Product }) {
     e.preventDefault();
     e.stopPropagation();
     if (cartBusy) return;
+    if (outOfStock) {
+      onStockError(outOfStockMessage(product.name));
+      return;
+    }
+    const inCart = cart.find((c) => (c.product_id || c.slug) === product.id);
+    const inCartQty = inCart?.qty ?? inCart?.quantity ?? 0;
+    if (inCartQty + 1 > stock) {
+      onStockError(lowStockMessage(product.name, stock, inCartQty));
+      return;
+    }
     setCartBusy(true);
     try {
       await addToCart({
@@ -75,6 +89,9 @@ function ProductCard({ product }: { product: Product }) {
       const status = (err as { status?: number })?.status;
       if (status === 401 || status === 403) {
         router.push(`/login?next=${encodeURIComponent("/catalog")}`);
+      } else {
+        const stockMsg = parseStockError(err);
+        if (stockMsg) onStockError(stockMsg);
       }
     } finally {
       setCartBusy(false);
@@ -105,6 +122,11 @@ function ProductCard({ product }: { product: Product }) {
         {product.images && product.images.length > 1 && (
           <span className="absolute bottom-2 right-2 bg-black/55 text-white text-[10px] px-1.5 py-0.5 rounded-full font-medium">
             +{product.images.length - 1}
+          </span>
+        )}
+        {outOfStock && (
+          <span className="absolute top-2 left-2 bg-[#b91c1c] text-white text-[10px] font-bold px-2 py-1 rounded-full">
+            OUT OF STOCK
           </span>
         )}
       </Link>
@@ -140,16 +162,17 @@ function ProductCard({ product }: { product: Product }) {
           <span className="font-bold text-[15px] text-[#b45309]">{formatNPR(product.price)}</span>
           <button
             onClick={handleAddToCart}
-            disabled={cartBusy}
-            aria-label="Add to cart"
-            className={`w-7 h-7 rounded-full transition-colors flex items-center justify-center disabled:opacity-50 ${justAdded ? "bg-[#15803d] text-white" : "bg-[#1c1917] group-hover:bg-[#b45309] group-hover:text-white text-white"}`}
+            disabled={cartBusy || outOfStock}
+            aria-label={outOfStock ? `${product.name} is out of stock` : "Add to cart"}
+            title={outOfStock ? outOfStockMessage(product.name) : `Add ${product.name} to cart`}
+            className={`w-7 h-7 rounded-full transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed ${justAdded ? "bg-[#15803d] text-white" : outOfStock ? "bg-[#e7e5e4] text-[#a8a29e]" : "bg-[#1c1917] group-hover:bg-[#b45309] group-hover:text-white text-white"}`}
           >
             {cartBusy ? (
               <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
             ) : justAdded ? (
               <span className="material-symbols-outlined text-[14px]">check</span>
             ) : (
-              <span className="material-symbols-outlined text-[14px]">add_shopping_cart</span>
+              <span className="material-symbols-outlined text-[14px]">{outOfStock ? "block" : "add_shopping_cart"}</span>
             )}
           </button>
         </div>
@@ -161,6 +184,7 @@ function ProductCard({ product }: { product: Product }) {
 export default function NewArrivals() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState<ToastNotice | null>(null);
 
   useEffect(() => {
     getProducts()
@@ -187,10 +211,11 @@ export default function NewArrivals() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-gutter">
           {products.map((p) => (
-            <ProductCard key={p.id} product={p} />
+            <ProductCard key={p.id} product={p} onStockError={(message) => setNotice({ type: "error", message })} />
           ))}
         </div>
       </div>
+      <Toast notice={notice} onClose={() => setNotice(null)} />
     </section>
   );
 }

@@ -1,5 +1,5 @@
 import { apiClient } from "./api-client";
-import type { ShippingAddress, DeliveryMethod, PaymentMethod, CardDetails } from "./types";
+import type { ShippingAddress, DeliveryMethod, PaymentMethod } from "./types";
 
 type AddressResponse = {
   id: string;
@@ -40,7 +40,6 @@ export type CheckoutDeliveryState = {
 
 export type CheckoutPaymentState = {
   method: PaymentMethod;
-  card?: CardDetails;
   sameBilling: boolean;
 };
 

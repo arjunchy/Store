@@ -16,7 +16,7 @@ import {
   clearCheckout,
 } from "@/lib/checkout";
 import { initiateKhaltiPayment, initiateEsewaPayment, submitEsewaForm } from "@/lib/payment";
-import { stashCartBackup, clearCartBackup } from "@/lib/cart-backup";
+import { stashCartBackup } from "@/lib/cart-backup";
 import type { ShippingAddress, DeliveryMethod, PaymentMethod } from "@/lib/types";
 
 const formatUSD = formatNPR;
@@ -30,7 +30,7 @@ export default function OrderReviewPage() {
 
 function ReviewInner() {
   const router = useRouter();
-  const { cart, subtotal, clearCart, refresh } = useCart();
+  const { cart, subtotal, refresh } = useCart();
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState("");
   const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
@@ -114,7 +114,10 @@ function ReviewInner() {
         orderNumber: (order as any).orderNumber || order.id,
       };
       localStorage.setItem("apexcommerce_last_order_snapshot", JSON.stringify(snapshot));
-      localStorage.setItem("apexcommerce_last_order_id", (order as any).orderNumber || order.id);
+      // Store the order UUID (backend looks orders up by id). The human-readable
+      // orderNumber lives in the snapshot above — storing it here broke
+      // restore-from-order and /orders/:id links after reload (H2).
+      localStorage.setItem("apexcommerce_last_order_id", order.id);
       try { sessionStorage.setItem("apexcommerce_pending_order_id", order.id); } catch {}
       setPendingOrderId(order.id);
       setPendingOrderNumber((order as any).orderNumber || order.id);

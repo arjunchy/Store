@@ -20,7 +20,7 @@ function AddressesInner() {
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState<ShippingAddress | null>(null);
-  const [form, setForm] = useState({ label: "", street: "", city: "", state: "", postalCode: "", country: "" });
+  const [form, setForm] = useState({ label: "", street: "", city: "", state: "", postalCode: "", country: "", isDefault: false });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -38,7 +38,7 @@ function AddressesInner() {
   }, []);
 
   const resetForm = () => {
-    setForm({ label: "", street: "", city: "", state: "", postalCode: "", country: "" });
+    setForm({ label: "", street: "", city: "", state: "", postalCode: "", country: "", isDefault: false });
     setEditing(null);
     setError("");
     setShowAdd(false);
@@ -46,7 +46,8 @@ function AddressesInner() {
 
   const openAdd = () => {
     setEditing(null);
-    setForm({ label: "", street: "", city: "", state: "", postalCode: "", country: "" });
+    // First address becomes the default automatically.
+    setForm({ label: "", street: "", city: "", state: "", postalCode: "", country: "", isDefault: addresses.length === 0 });
     setError("");
     setShowAdd(true);
   };
@@ -60,6 +61,9 @@ function AddressesInner() {
       state: addr.state || "",
       postalCode: addr.postal_code || addr.zip || "",
       country: addr.country,
+      // Preserve the current default status — previously the save payload
+      // hardcoded is_default:false and silently demoted the default address.
+      isDefault: !!(addr.is_default || addr.isDefault),
     });
     setError("");
     setShowAdd(true);
@@ -91,8 +95,8 @@ function AddressesInner() {
         postal_code: form.postalCode.trim(),
         zip: form.postalCode.trim(),
         country: form.country.trim(),
-        is_default: false,
-        isDefault: false,
+        is_default: form.isDefault,
+        isDefault: form.isDefault,
       } as unknown as Omit<ShippingAddress, "id">;
       if (editing) {
         await updateAddress(editing.id, payload as any);
@@ -184,6 +188,15 @@ function AddressesInner() {
               <input placeholder="State" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} className="rounded-xl bg-[#fafaf9] border border-[#d6d3d1]/80 px-4 py-3 text-[14px] text-[#1c1917] focus:border-[#b45309] outline-none" />
               <input placeholder="Postal Code *" value={form.postalCode} onChange={(e) => setForm({ ...form, postalCode: e.target.value })} className="col-span-2 md:col-span-1 rounded-xl bg-[#fafaf9] border border-[#d6d3d1]/80 px-4 py-3 text-[14px] text-[#1c1917] focus:border-[#b45309] outline-none" />
             </div>
+            <label className="flex items-center gap-2 mt-3 text-[13px] text-[#57534e] cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={form.isDefault}
+                onChange={(e) => setForm({ ...form, isDefault: e.target.checked })}
+                className="w-4 h-4 accent-[#b45309]"
+              />
+              Set as default address
+            </label>
             <p className="text-[11px] text-[#57534e] mt-2">* Required fields.</p>
             <div className="flex gap-3 mt-4">
               <button onClick={resetForm} className="px-5 py-2.5 border border-[#d6d3d1] rounded-lg text-[13px] font-semibold hover:bg-[#fafaf9]">

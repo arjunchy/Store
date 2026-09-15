@@ -207,6 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // clear guest/wishlist/checkout caches to prevent cross-user leak
     try {
       localStorage.removeItem("apexcommerce_guest_cart");
+      localStorage.removeItem("apexcommerce_cart_backup");
       localStorage.removeItem("apexcommerce_wishlist_cache");
       localStorage.removeItem("apexcommerce_last_order_snapshot");
       localStorage.removeItem("apexcommerce_last_order_id");
@@ -214,6 +215,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem("apexcommerce_v1_checkout_delivery");
       localStorage.removeItem("apexcommerce_selected_address");
       localStorage.removeItem("apexcommerce_payment_method");
+      // Per-session pending-order pointers must not survive a user switch —
+      // the next user must never see (or attempt to restore) the old order.
+      try {
+        sessionStorage.removeItem("apexcommerce_pending_order_id");
+        sessionStorage.removeItem("khalti_pidx");
+        sessionStorage.removeItem("khalti_orderId");
+        sessionStorage.removeItem("esewa_uuid");
+        sessionStorage.removeItem("esewa_orderId");
+      } catch {}
     } catch {}
   }, []);
 

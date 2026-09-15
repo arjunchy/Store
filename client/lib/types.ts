@@ -175,9 +175,8 @@ export type Order = {
   statusHistory?: OrderStatusHistory[];
 };
 
-export type PaymentMethodType = "ESEWA" | "KHALTI" | "CREDIT_CARD" | "PAYPAL" | "STRIPE";
+export type PaymentMethodType = "ESEWA" | "KHALTI";
 export type PaymentMethod = "esewa" | "khalti";
-export type LegacyPaymentMethod = "card" | "paypal" | "stripe";
 export type PaymentStatusType = "UNPAID" | "PAID" | "EXPIRED" | "REFUNDING" | "REFUNDED";
 export type LegacyPaymentStatusType = "PENDING" | "COMPLETED" | "FAILED";
 
@@ -191,12 +190,6 @@ export type Payment = {
   status: PaymentStatusType;
   amount: number;
   createdAt: string;
-};
-
-export type CardDetails = {
-  number: string;
-  expiry: string;
-  name: string;
 };
 
 export type DeliveryMethod = "standard" | "express";
@@ -219,7 +212,6 @@ export type CheckoutState = {
   shippingAddressId: string | null;
   deliveryMethod: DeliveryMethod;
   paymentMethod: PaymentMethod;
-  card?: CardDetails;
   sameBilling: boolean;
 };
 

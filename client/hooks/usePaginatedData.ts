@@ -26,7 +26,11 @@ export function usePaginatedData<T>(
     setLoading(true);
     setError(null);
     try {
-      const res = await fetcher({ page, size, ...params, signal });
+      // Live page/size must win: strip any stale page/size out of params
+      // (params is seeded from initialParams and never updated by setPage),
+      // then apply the current page/size on top.
+      const { page: _stalePage, size: _staleSize, ...rest } = params ?? {};
+      const res = await fetcher({ ...rest, page, size, signal });
       if (signal?.aborted) return;
       setData(res.content ?? []);
       setTotalElements(res.totalElements ?? 0);
