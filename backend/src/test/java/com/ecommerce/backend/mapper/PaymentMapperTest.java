@@ -25,7 +25,8 @@ class PaymentMapperTest {
                 .order(order)
                 .amount(new BigDecimal("150.00"))
                 .method(PaymentMethod.KHALTI)
-                .transactionId("TXN-123")
+                .transactionId("uuid-fresh-1")
+                .transactionCode("TXN-123")
                 .status(PaymentStatus.COMPLETED)
                 .createdAt(now)
                 .build();
@@ -36,7 +37,8 @@ class PaymentMapperTest {
         assertThat(response.orderId()).isEqualTo("ord-1");
         assertThat(response.amount()).isEqualByComparingTo(new BigDecimal("150.00"));
         assertThat(response.method()).isEqualTo("KHALTI");
-        assertThat(response.transactionId()).isEqualTo("TXN-123");
+        assertThat(response.transactionId()).isEqualTo("uuid-fresh-1");
+        assertThat(response.transactionCode()).isEqualTo("TXN-123");
         assertThat(response.status()).isEqualTo("COMPLETED");
         assertThat(response.createdAt()).isEqualTo(now);
     }
@@ -63,6 +65,7 @@ class PaymentMapperTest {
         assertThat(response.orderId()).isNull();
         assertThat(response.method()).isNull();
         assertThat(response.transactionId()).isNull();
+        assertThat(response.transactionCode()).isNull();
         assertThat(response.status()).isNull();
     }
 

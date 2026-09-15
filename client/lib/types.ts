@@ -187,6 +187,11 @@ export type Payment = {
   method: PaymentMethodType;
   transaction_id: string;
   transactionId?: string;
+  // Canonical: transactionCode (gateway reference, e.g. eSewa transaction_code).
+  // txn_code/txnCode kept as deprecated aliases during rollout.
+  transactionCode?: string;
+  txn_code?: string;
+  txnCode?: string;
   status: PaymentStatusType;
   amount: number;
   createdAt: string;

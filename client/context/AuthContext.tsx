@@ -220,6 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         sessionStorage.removeItem("apexcommerce_pending_order_id");
         sessionStorage.removeItem("khalti_pidx");
+        sessionStorage.removeItem("khalti_transactionId");
         sessionStorage.removeItem("khalti_orderId");
         sessionStorage.removeItem("esewa_uuid");
         sessionStorage.removeItem("esewa_orderId");

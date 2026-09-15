@@ -144,7 +144,7 @@ class EsewaServiceTest {
     }
 
     @Test
-    void initiate_success_returnsResponseWithSignature() {
+    void initiate_success_returnsResponseWithFreshUuid() {
         when(orderRepository.findByIdForUpdate("ord-1")).thenReturn(Optional.of(order));
         when(paymentRepository.findByOrderIdAndStatus("ord-1", PaymentStatus.PAID)).thenReturn(Optional.empty());
         when(paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc("ord-1")).thenReturn(Optional.empty());
@@ -154,7 +154,9 @@ class EsewaServiceTest {
 
         assertThat(resp.gatewayUrl()).isEqualTo(testGatewayUrl);
         assertThat(resp.productCode()).isEqualTo(productCode);
-        assertThat(resp.transactionUuid()).isEqualTo("ord-1");
+        // transactionUuid is freshly generated per initiation — never the order id.
+        assertThat(resp.transactionUuid()).isNotNull().isNotBlank();
+        assertThat(resp.transactionUuid()).isNotEqualTo("ord-1");
         // fmt() strips trailing zeros: 500.00 → "500"
         assertThat(resp.totalAmount()).isEqualTo("500");
         assertThat(resp.amount()).isEqualTo("400");
@@ -168,8 +170,8 @@ class EsewaServiceTest {
         assertThat(resp.orderId()).isEqualTo("ord-1");
         assertThat(resp.orderNumber()).isEqualTo("ORD-001");
 
-        // Verify the signature is valid — fmt() strips trailing zeros so 500.00 → "500"
-        String expectedMessage = "total_amount=500,transaction_uuid=ord-1,product_code=EPAYTEST";
+        // Verify the signature matches the fresh uuid — fmt() strips trailing zeros so 500.00 → "500"
+        String expectedMessage = "total_amount=500,transaction_uuid=" + resp.transactionUuid() + ",product_code=EPAYTEST";
         String expectedSig = EsewaService.hmacSha256Base64(secretKey, expectedMessage);
         assertThat(resp.signature()).isEqualTo(expectedSig);
 
@@ -177,14 +179,15 @@ class EsewaServiceTest {
         verify(paymentRepository).save(captor.capture());
         Payment savedPayment = captor.getValue();
         assertThat(savedPayment.getMethod()).isEqualTo(PaymentMethod.ESEWA);
-        assertThat(savedPayment.getTransactionId()).isEqualTo("ord-1");
+        // Payment.transactionId == eSewa transaction_uuid (fresh), not the order id.
+        assertThat(savedPayment.getTransactionId()).isEqualTo(resp.transactionUuid());
         assertThat(savedPayment.getStatus()).isEqualTo(PaymentStatus.INITIATED);
         assertThat(savedPayment.getPaymentUrl()).isEqualTo(testGatewayUrl);
         assertThat(savedPayment.getAmount()).isEqualByComparingTo(new BigDecimal("500.00"));
     }
 
     @Test
-    void initiate_reusesExistingInitiatedPayment() {
+    void initiate_supersedesExistingInitiatedPaymentWithFreshUuid() {
         when(orderRepository.findByIdForUpdate("ord-1")).thenReturn(Optional.of(order));
         when(paymentRepository.findByOrderIdAndStatus("ord-1", PaymentStatus.PAID)).thenReturn(Optional.empty());
 
@@ -192,7 +195,7 @@ class EsewaServiceTest {
                 .order(order)
                 .amount(new BigDecimal("500.00"))
                 .method(PaymentMethod.ESEWA)
-                .transactionId("ord-1")
+                .transactionId("old-uuid-1")
                 .paymentUrl(testGatewayUrl)
                 .status(PaymentStatus.INITIATED)
                 .build();
@@ -202,13 +205,16 @@ class EsewaServiceTest {
 
         EsewaInitiateResponse resp = esewaService.initiate("ord-1", "user-1");
 
-        assertThat(resp.transactionUuid()).isEqualTo("ord-1");
-        verify(paymentRepository).save(existing);
+        // Fresh uuid every time — never reuses the previous attempt's uuid or the order id.
+        assertThat(resp.transactionUuid()).isNotEqualTo("old-uuid-1");
+        assertThat(resp.transactionUuid()).isNotEqualTo("ord-1");
+        assertThat(existing.getStatus()).isEqualTo(PaymentStatus.EXPIRED);
+        verify(paymentRepository, times(2)).save(any(Payment.class));
     }
 
     @Test
     void hmacSha256Base64_generatesConsistentSignature() {
-        String message = "total_amount=500,transaction_uuid=ord-1,product_code=EPAYTEST";
+        String message = "total_amount=500,transaction_uuid=some-uuid,product_code=EPAYTEST";
         String sig1 = EsewaService.hmacSha256Base64(secretKey, message);
         String sig2 = EsewaService.hmacSha256Base64(secretKey, message);
         assertThat(sig1).isEqualTo(sig2);
@@ -224,10 +230,7 @@ class EsewaServiceTest {
 
     @Test
     void verify_orderNotFound_throws() {
-        when(paymentRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc("missing", PaymentStatus.INITIATED))
-                .thenReturn(Optional.empty());
-        when(paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc("missing"))
-                .thenReturn(Optional.empty());
+        when(paymentRepository.findByTransactionId("missing")).thenReturn(Optional.empty());
         when(orderRepository.findById("missing")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> esewaService.verify(null, "missing", null, null, "user-1"))
@@ -241,22 +244,22 @@ class EsewaServiceTest {
         String json = objectMapper.writeValueAsString(Map.of("status", "COMPLETE"));
         String encodedData = Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
 
-        assertThatThrownBy(() -> esewaService.verify(encodedData, "ord-1", null, null, "user-1"))
+        assertThatThrownBy(() -> esewaService.verify(encodedData, "uuid-x", null, null, "user-1"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid eSewa response data");
     }
 
     @Test
     void verify_statusNotComplete_returnsNonPaid() {
+        String uuid = "uuid-pending-1";
         Payment existingPayment = Payment.builder()
                 .order(order)
                 .amount(new BigDecimal("500.00"))
                 .method(PaymentMethod.ESEWA)
-                .transactionId("ord-1")
+                .transactionId(uuid)
                 .status(PaymentStatus.INITIATED)
                 .build();
-        when(paymentRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc("ord-1", PaymentStatus.INITIATED))
-                .thenReturn(Optional.of(existingPayment));
+        when(paymentRepository.findByTransactionId(uuid)).thenReturn(Optional.of(existingPayment));
 
         Map<String, Object> statusResp = new HashMap<>();
         statusResp.put("status", "PENDING");
@@ -265,24 +268,27 @@ class EsewaServiceTest {
         when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(responseEntity);
 
-        Map<String, Object> result = esewaService.verify(null, "ord-1", null, "500", "user-1");
+        Map<String, Object> result = esewaService.verify(null, uuid, null, "500", "user-1");
 
         assertThat(result.get("status")).isEqualTo("PENDING");
+        assertThat(result.get("orderId")).isEqualTo("ord-1");
+        assertThat(result.get("transactionId")).isEqualTo(uuid);
         verify(paymentRepository, never()).save(any(Payment.class));
         verify(orderRepository, never()).save(any(Order.class));
     }
 
     @Test
     void verify_withValidData_complete_marksPaid() throws Exception {
+        String uuid = "uuid-pay-1";
         Payment existingPayment = Payment.builder()
                 .order(order)
                 .amount(new BigDecimal("500.00"))
                 .method(PaymentMethod.ESEWA)
-                .transactionId("ord-1")
+                .transactionId(uuid)
                 .status(PaymentStatus.INITIATED)
                 .build();
-        when(paymentRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc("ord-1", PaymentStatus.INITIATED))
-                .thenReturn(Optional.of(existingPayment));
+        when(paymentRepository.findByTransactionId(uuid)).thenReturn(Optional.of(existingPayment));
+        when(orderRepository.findByIdForUpdate("ord-1")).thenReturn(Optional.of(order));
         when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
         when(cartRepository.findByUserId("user-1")).thenReturn(Optional.empty());
@@ -291,11 +297,11 @@ class EsewaServiceTest {
         // The verify code reconstructs the message from the decoded data fields,
         // so total_amount value in dataMap must match what we sign
         String signedFields = "total_amount,transaction_uuid,product_code";
-        String message = "total_amount=500.00,transaction_uuid=ord-1,product_code=EPAYTEST";
+        String message = "total_amount=500.00,transaction_uuid=" + uuid + ",product_code=EPAYTEST";
         String signature = EsewaService.hmacSha256Base64(secretKey, message);
 
         Map<String, Object> dataMap = new HashMap<>();
-        dataMap.put("transaction_uuid", "ord-1");
+        dataMap.put("transaction_uuid", uuid);
         dataMap.put("transaction_code", "TXN-ES-123");
         dataMap.put("status", "COMPLETE");
         dataMap.put("total_amount", "500.00");
@@ -314,41 +320,62 @@ class EsewaServiceTest {
         when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(responseEntity);
 
-        Map<String, Object> result = esewaService.verify(encodedData, "ord-1", "TXN-ES-123", "500.00", "user-1");
+        Map<String, Object> result = esewaService.verify(encodedData, uuid, "TXN-ES-123", "500.00", "user-1");
 
         assertThat(result.get("orderId")).isEqualTo("ord-1");
         assertThat(result.get("orderNumber")).isEqualTo("ORD-001");
         assertThat(result.get("paymentStatus")).isEqualTo(OrderPaymentStatus.PAID.name());
-        assertThat(result.get("transaction_id")).isEqualTo("TXN-ES-123");
+        assertThat(result.get("transactionId")).isEqualTo(uuid);
+        assertThat(result.get("transactionCode")).isEqualTo("TXN-ES-123");
         assertThat(result.get("amountPaid")).isEqualTo("500");
 
         ArgumentCaptor<Payment> paymentCaptor = ArgumentCaptor.forClass(Payment.class);
         verify(paymentRepository, atLeastOnce()).save(paymentCaptor.capture());
         Payment savedPayment = paymentCaptor.getValue();
         assertThat(savedPayment.getStatus()).isEqualTo(PaymentStatus.PAID);
+        assertThat(savedPayment.getTransactionCode()).isEqualTo("TXN-ES-123");
+        // transactionId (our uuid) is never overwritten by the gateway code.
+        assertThat(savedPayment.getTransactionId()).isEqualTo(uuid);
+    }
+
+    @Test
+    void verify_legacyUuidEqualsOrderId_resolvesOrder() {
+        // Rows created before fresh UUIDs used orderId as the uuid.
+        when(paymentRepository.findByTransactionId("ord-1")).thenReturn(Optional.empty());
+        when(orderRepository.findById("ord-1")).thenReturn(Optional.of(order));
+
+        Map<String, Object> statusResp = new HashMap<>();
+        statusResp.put("status", "PENDING");
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(statusResp));
+
+        Map<String, Object> result = esewaService.verify(null, "ord-1", null, "500", "user-1");
+
+        assertThat(result.get("orderId")).isEqualTo("ord-1");
+        assertThat(result.get("transactionId")).isEqualTo("ord-1");
     }
 
     @Test
     void verify_alreadyPaid_returnsIdempotentSuccess_withoutStatusCheck() {
+        String uuid = "uuid-paid-1";
         order.setPaymentStatus(OrderPaymentStatus.PAID);
         Payment paidPayment = Payment.builder()
                 .order(order)
                 .amount(new BigDecimal("500.00"))
                 .method(PaymentMethod.ESEWA)
-                .transactionId("TXN-ES-123")
+                .transactionId(uuid)
+                .transactionCode("TXN-ES-123")
                 .status(PaymentStatus.PAID)
                 .build();
-        when(paymentRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc("ord-1", PaymentStatus.INITIATED))
-                .thenReturn(Optional.empty());
-        when(paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc("ord-1"))
-                .thenReturn(Optional.of(paidPayment));
+        when(paymentRepository.findByTransactionId(uuid)).thenReturn(Optional.of(paidPayment));
 
-        Map<String, Object> result = esewaService.verify(null, "ord-1", null, "500", "user-1");
+        Map<String, Object> result = esewaService.verify(null, uuid, null, "500", "user-1");
 
         assertThat(result.get("orderId")).isEqualTo("ord-1");
         assertThat(result.get("paymentStatus")).isEqualTo(OrderPaymentStatus.PAID.name());
         assertThat(result.get("status")).isEqualTo("COMPLETE");
-        assertThat(result.get("transaction_id")).isEqualTo("TXN-ES-123");
+        assertThat(result.get("transactionId")).isEqualTo(uuid);
+        assertThat(result.get("transactionCode")).isEqualTo("TXN-ES-123");
         assertThat(result.get("amountPaid")).isEqualTo("500");
         // Duplicate verify must not hit eSewa again, rewrite payment, or touch the cart
         verify(restTemplate, never()).exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
@@ -359,15 +386,15 @@ class EsewaServiceTest {
 
     @Test
     void verify_concurrentLoserSeesPaidAfterLock_returnsSuccess() {
+        String uuid = "uuid-race-1";
         Payment initiatedPayment = Payment.builder()
                 .order(order)
                 .amount(new BigDecimal("500.00"))
                 .method(PaymentMethod.ESEWA)
-                .transactionId("ord-1")
+                .transactionId(uuid)
                 .status(PaymentStatus.INITIATED)
                 .build();
-        when(paymentRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc("ord-1", PaymentStatus.INITIATED))
-                .thenReturn(Optional.of(initiatedPayment));
+        when(paymentRepository.findByTransactionId(uuid)).thenReturn(Optional.of(initiatedPayment));
 
         Map<String, Object> statusResp = new HashMap<>();
         statusResp.put("status", "COMPLETE");
@@ -388,18 +415,19 @@ class EsewaServiceTest {
                 .order(paidOrder)
                 .amount(new BigDecimal("500.00"))
                 .method(PaymentMethod.ESEWA)
-                .transactionId("TXN-ES-123")
+                .transactionId(uuid)
+                .transactionCode("TXN-ES-123")
                 .status(PaymentStatus.PAID)
                 .build();
         when(orderRepository.findByIdForUpdate("ord-1")).thenReturn(Optional.of(paidOrder));
-        when(paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc("ord-1"))
-                .thenReturn(Optional.of(paidPayment));
+        // Lock-section re-read by transactionId now sees the winner's PAID row.
+        when(paymentRepository.findByTransactionId(uuid)).thenReturn(Optional.of(initiatedPayment), Optional.of(paidPayment));
 
-        Map<String, Object> result = esewaService.verify(null, "ord-1", null, "500", "user-1");
+        Map<String, Object> result = esewaService.verify(null, uuid, null, "500", "user-1");
 
         assertThat(result.get("orderId")).isEqualTo("ord-1");
         assertThat(result.get("paymentStatus")).isEqualTo(OrderPaymentStatus.PAID.name());
-        assertThat(result.get("transaction_id")).isEqualTo("TXN-ES-123");
+        assertThat(result.get("transactionId")).isEqualTo(uuid);
         assertThat(result.get("amountPaid")).isEqualTo("500");
         // Loser must not rewrite payment/order or re-clear the cart
         verify(paymentRepository, never()).save(any(Payment.class));
@@ -409,17 +437,17 @@ class EsewaServiceTest {
 
     @Test
     void verify_wrongUser_throwsOrderNotFound() {
+        String uuid = "uuid-other-1";
         Payment existingPayment = Payment.builder()
                 .order(order)
                 .amount(new BigDecimal("500.00"))
                 .method(PaymentMethod.ESEWA)
-                .transactionId("ord-1")
+                .transactionId(uuid)
                 .status(PaymentStatus.INITIATED)
                 .build();
-        when(paymentRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc("ord-1", PaymentStatus.INITIATED))
-                .thenReturn(Optional.of(existingPayment));
+        when(paymentRepository.findByTransactionId(uuid)).thenReturn(Optional.of(existingPayment));
 
-        assertThatThrownBy(() -> esewaService.verify(null, "ord-1", null, "500", "user-2"))
+        assertThatThrownBy(() -> esewaService.verify(null, uuid, null, "500", "user-2"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Order not found");
         verify(restTemplate, never()).exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
@@ -427,24 +455,24 @@ class EsewaServiceTest {
 
     @Test
     void verify_callbackAmountMismatch_throws() throws Exception {
+        String uuid = "uuid-amt-1";
         Payment existingPayment = Payment.builder()
                 .order(order)
                 .amount(new BigDecimal("500.00"))
                 .method(PaymentMethod.ESEWA)
-                .transactionId("ord-1")
+                .transactionId(uuid)
                 .status(PaymentStatus.INITIATED)
                 .build();
-        when(paymentRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc("ord-1", PaymentStatus.INITIATED))
-                .thenReturn(Optional.of(existingPayment));
+        when(paymentRepository.findByTransactionId(uuid)).thenReturn(Optional.of(existingPayment));
 
         // Signed callback for a CHEAPER amount must never confirm the order,
         // even though the signature itself is valid.
         String signedFields = "total_amount,transaction_uuid,product_code";
-        String message = "total_amount=100.00,transaction_uuid=ord-1,product_code=EPAYTEST";
+        String message = "total_amount=100.00,transaction_uuid=" + uuid + ",product_code=EPAYTEST";
         String signature = EsewaService.hmacSha256Base64(secretKey, message);
 
         Map<String, Object> dataMap = new HashMap<>();
-        dataMap.put("transaction_uuid", "ord-1");
+        dataMap.put("transaction_uuid", uuid);
         dataMap.put("transaction_code", "TXN-ES-999");
         dataMap.put("status", "COMPLETE");
         dataMap.put("total_amount", "100.00");
@@ -455,7 +483,7 @@ class EsewaServiceTest {
         String json = objectMapper.writeValueAsString(dataMap);
         String encodedData = Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
 
-        assertThatThrownBy(() -> esewaService.verify(encodedData, "ord-1", "TXN-ES-999", "100.00", "user-1"))
+        assertThatThrownBy(() -> esewaService.verify(encodedData, uuid, "TXN-ES-999", "100.00", "user-1"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("amount mismatch");
         verify(restTemplate, never()).exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class));
@@ -463,19 +491,20 @@ class EsewaServiceTest {
 
     @Test
     void verify_missingUserId_throws() {
-        assertThatThrownBy(() -> esewaService.verify(null, "ord-1", null, "500", null))
+        assertThatThrownBy(() -> esewaService.verify(null, "uuid-x", null, "500", null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Authentication required");
     }
 
     @Test
     void verify_signatureMismatch_throws() throws Exception {
+        String uuid = "uuid-sig-1";
         // Build valid base64 data with product_code included so the only failure is the signature
-        String message = "total_amount=500.00,transaction_uuid=ord-1,product_code=EPAYTEST";
+        String message = "total_amount=500.00,transaction_uuid=" + uuid + ",product_code=EPAYTEST";
         String wrongSignature = EsewaService.hmacSha256Base64("wrong-secret", message);
 
         Map<String, Object> dataMap = new HashMap<>();
-        dataMap.put("transaction_uuid", "ord-1");
+        dataMap.put("transaction_uuid", uuid);
         dataMap.put("transaction_code", "TXN-ES-123");
         dataMap.put("status", "COMPLETE");
         dataMap.put("total_amount", "500.00");
@@ -486,7 +515,7 @@ class EsewaServiceTest {
         String json = objectMapper.writeValueAsString(dataMap);
         String encodedData = Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
 
-        assertThatThrownBy(() -> esewaService.verify(encodedData, "ord-1", "TXN-ES-123", "500.00", "user-1"))
+        assertThatThrownBy(() -> esewaService.verify(encodedData, uuid, "TXN-ES-123", "500.00", "user-1"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("signature verification failed");
     }

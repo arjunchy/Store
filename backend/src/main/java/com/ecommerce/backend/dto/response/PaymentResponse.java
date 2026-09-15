@@ -9,6 +9,7 @@ public record PaymentResponse(
         BigDecimal amount,
         String method,
         String transactionId,
+        String transactionCode,
         String status,
         LocalDateTime createdAt
 ) {

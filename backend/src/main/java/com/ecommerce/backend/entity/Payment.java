@@ -44,6 +44,9 @@ public class Payment {
     @Column(name = "transaction_id", nullable = false, unique = true)
     private String transactionId;
 
+    @Column(name = "txn_code", length = 100)
+    private String transactionCode;
+
     @Column(name = "pidx")
     private String pidx;
 

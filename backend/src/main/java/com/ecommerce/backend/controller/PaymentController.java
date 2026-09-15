@@ -111,8 +111,7 @@ public class PaymentController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false, name = "transaction_id") String transactionId,
             @AuthenticationPrincipal CustomUserDetails userDetails) {
-        // Authenticated callback — the caller must own the order. Previously this
-        // endpoint was public and mutated order state for any known pidx.
+        // Callback requires auth and order ownership (checked in lookup).
         if (userDetails == null) {
             throw new IllegalArgumentException("Authentication required");
         }
@@ -125,9 +124,9 @@ public class PaymentController {
     public ResponseEntity<EsewaInitiateResponse> initiateEsewa(
             @RequestBody Map<String, String> body,
             @AuthenticationPrincipal CustomUserDetails userDetails) {
+        // Initiate is always by orderId; transactionId is generated fresh server-side.
         String orderId = body.get("orderId");
         if (orderId == null) orderId = body.get("order_id");
-        if (orderId == null) orderId = body.get("transaction_uuid");
         if (orderId == null || orderId.isBlank()) throw new IllegalArgumentException("orderId is required");
         String userId = userDetails.getUserId();
         log.info("POST /api/payments/esewa/initiate orderId={} userId={}", orderId, userId);
@@ -142,7 +141,7 @@ public class PaymentController {
         log.info("POST /api/payments/esewa/verify uuid={} hasData={} userId={}",
                 request.transactionUuid(), request.data() != null && !request.data().isBlank(), userDetails.getUserId());
         Map<String, Object> result = esewaService.verify(
-                request.data(), request.transactionUuid(), request.transactionCode(), request.totalAmount());
+                request.data(), request.transactionUuid(), request.transactionCode(), request.totalAmount(), userDetails.getUserId());
         return ResponseEntity.ok(result);
     }
 }

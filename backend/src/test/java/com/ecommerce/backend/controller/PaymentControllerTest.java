@@ -2,9 +2,12 @@ package com.ecommerce.backend.controller;
 
 import com.ecommerce.backend.config.CustomUserDetails;
 import com.ecommerce.backend.dto.request.EsewaVerifyRequest;
+import com.ecommerce.backend.dto.request.KhaltiLookupRequest;
 import com.ecommerce.backend.dto.response.EsewaInitiateResponse;
+import com.ecommerce.backend.dto.response.KhaltiInitiateResponse;
 import com.ecommerce.backend.dto.response.PaymentResponse;
 import com.ecommerce.backend.service.payment.EsewaService;
+import com.ecommerce.backend.service.payment.KhaltiService;
 import com.ecommerce.backend.service.payment.PaymentService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +38,9 @@ class PaymentControllerTest {
     @Mock
     private EsewaService esewaService;
 
+    @Mock
+    private KhaltiService khaltiService;
+
     @InjectMocks
     private PaymentController paymentController;
 
@@ -47,7 +53,7 @@ class PaymentControllerTest {
     void setUp() {
         sampleResponse = new PaymentResponse(
                 "pay-1", "ord-1", new BigDecimal("500.00"),
-                "ESEWA", "TXN-123", "COMPLETED", LocalDateTime.now()
+                "ESEWA", "uuid-fresh-1", "TXN-123", "COMPLETED", LocalDateTime.now()
         );
     }
 
@@ -216,5 +222,119 @@ class PaymentControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody().get("status")).isEqualTo("PENDING");
         assertThat(response.getBody().get("paymentStatus")).isEqualTo("UNPAID");
+    }
+
+    private KhaltiInitiateResponse sampleKhaltiResponse() {
+        return new KhaltiInitiateResponse(
+                "pidx-1",
+                "TXN-ours-1",
+                "https://pay.khalti.com/pidx-1",
+                null,
+                1800,
+                "ord-1",
+                "ORD-001",
+                "ApexCommerce Order ORD-001",
+                15000
+        );
+    }
+
+    @Test
+    void initiateKhalti_success_returns200() {
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(khaltiService.initiate("ord-1", "user-1")).thenReturn(sampleKhaltiResponse());
+
+        Map<String, String> body = new HashMap<>();
+        body.put("orderId", "ord-1");
+
+        ResponseEntity<KhaltiInitiateResponse> response = paymentController.initiateKhalti(body, userDetails);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().pidx()).isEqualTo("pidx-1");
+        assertThat(response.getBody().transactionId()).isEqualTo("TXN-ours-1");
+        verify(khaltiService).initiate("ord-1", "user-1");
+    }
+
+    @Test
+    void initiateKhalti_withSnakeCaseKey_returns200() {
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(khaltiService.initiate("ord-xyz", "user-1")).thenReturn(sampleKhaltiResponse());
+
+        Map<String, String> body = new HashMap<>();
+        body.put("order_id", "ord-xyz");
+
+        ResponseEntity<KhaltiInitiateResponse> response = paymentController.initiateKhalti(body, userDetails);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(khaltiService).initiate("ord-xyz", "user-1");
+    }
+
+    @Test
+    void initiateKhalti_missingOrderId_throws() {
+        assertThatThrownBy(() -> paymentController.initiateKhalti(new HashMap<>(), userDetails))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("orderId is required");
+    }
+
+    @Test
+    void initiateKhalti_orderNotFound_propagates() {
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(khaltiService.initiate("missing", "user-1"))
+                .thenThrow(new IllegalArgumentException("Order not found"));
+
+        Map<String, String> body = new HashMap<>();
+        body.put("orderId", "missing");
+
+        assertThatThrownBy(() -> paymentController.initiateKhalti(body, userDetails))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Order not found");
+    }
+
+    @Test
+    void lookupKhalti_success_returns200() {
+        Map<String, Object> lookupResult = new HashMap<>();
+        lookupResult.put("status", "Completed");
+        lookupResult.put("transactionId", "TXN-ours-1");
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(khaltiService.lookup("pidx-1", "user-1")).thenReturn(lookupResult);
+
+        ResponseEntity<Map<String, Object>> response =
+                paymentController.lookupKhalti(new KhaltiLookupRequest("pidx-1"), userDetails);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().get("status")).isEqualTo("Completed");
+        verify(khaltiService).lookup("pidx-1", "user-1");
+    }
+
+    @Test
+    void lookupKhalti_serviceError_propagates() {
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(khaltiService.lookup("pidx-1", "user-1"))
+                .thenThrow(new IllegalArgumentException("Payment not found"));
+
+        assertThatThrownBy(() -> paymentController.lookupKhalti(new KhaltiLookupRequest("pidx-1"), userDetails))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Payment not found");
+    }
+
+    @Test
+    void khaltiCallback_noAuth_throws() {
+        assertThatThrownBy(() -> paymentController.khaltiCallback("pidx-1", "Completed", "KHALTI-TXN-1", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Authentication required");
+    }
+
+    @Test
+    void khaltiCallback_success_delegatesToLookup() {
+        Map<String, Object> lookupResult = new HashMap<>();
+        lookupResult.put("status", "Completed");
+        when(userDetails.getUserId()).thenReturn("user-1");
+        when(khaltiService.lookup("pidx-1", "user-1")).thenReturn(lookupResult);
+
+        ResponseEntity<Map<String, Object>> response =
+                paymentController.khaltiCallback("pidx-1", "Completed", "KHALTI-TXN-1", userDetails);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().get("status")).isEqualTo("Completed");
+        verify(khaltiService).lookup("pidx-1", "user-1");
     }
 }

@@ -30,13 +30,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 @Service
 @Slf4j
@@ -141,10 +135,6 @@ public class EsewaService {
         }
     }
 
-    // ============================================================
-    // INITIATE PAYMENT
-    // ============================================================
-
     @Transactional
     public EsewaInitiateResponse initiate(String orderId, String userId) {
 
@@ -189,7 +179,11 @@ public class EsewaService {
 
         String deliveryStr = fmt(delivery);
 
-        String transactionUuid = order.getId();
+        // Fresh transaction uuid per initiation — never the order id.
+        String transactionUuid = "TXN-" + UUID.randomUUID()
+                .toString()
+                .replace("-", "")
+                .substring(0, 12);
 
         String signedFieldNames = "total_amount,transaction_uuid,product_code";
 
@@ -211,10 +205,6 @@ public class EsewaService {
         requestPayload.put("signed_field_names", signedFieldNames);
         requestPayload.put("signature", signature);
 
-        // --------------------------------------------------------
-        // Store ONLY the initiation request body
-        // --------------------------------------------------------
-
         String requestBody;
         try {
             requestBody = objectMapper.writeValueAsString(requestPayload);
@@ -222,29 +212,24 @@ public class EsewaService {
             throw new IllegalStateException("Failed to serialize eSewa request body", e);
         }
 
+        // Each initiation gets a fresh uuid; supersede any previous INITIATED attempt.
         Optional<Payment> existing = paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc(orderId);
-
-        Payment payment;
-        if (existing.isPresent() && PaymentStatus.INITIATED.equals(existing.get().getStatus()) && transactionUuid.equals(existing.get().getTransactionId())) {
-            payment = existing.get();
-            payment.setAmount(total);
-            payment.setMethod(PaymentMethod.ESEWA);
-            payment.setPaymentUrl(gatewayUrl());
-
-            // Only requestBody is changed here.
-            payment.setRequestBody(requestBody);
-
-        } else {
-            payment = Payment.builder()
-                            .order(order)
-                            .amount(total)
-                            .method(PaymentMethod.ESEWA)
-                            .transactionId(transactionUuid)
-                            .paymentUrl(gatewayUrl())
-                            .status(PaymentStatus.INITIATED)
-                            .requestBody(requestBody)
-                            .build();
+        if (existing.isPresent() && PaymentStatus.INITIATED.equals(existing.get().getStatus())) {
+            Payment superseded = existing.get();
+            superseded.setStatus(PaymentStatus.EXPIRED);
+            paymentRepository.save(superseded);
+            log.info("Superseded previous INITIATED eSewa payment {} for order {}", superseded.getTransactionId(), orderId);
         }
+
+        Payment payment = Payment.builder()
+                        .order(order)
+                        .amount(total)
+                        .method(PaymentMethod.ESEWA)
+                        .transactionId(transactionUuid)
+                        .paymentUrl(gatewayUrl())
+                        .status(PaymentStatus.INITIATED)
+                        .requestBody(requestBody)
+                        .build();
 
         paymentRepository.save(payment);
 
@@ -268,13 +253,21 @@ public class EsewaService {
         );
     }
 
-    // ============================================================
-    // VERIFY PAYMENT
-    // ============================================================
-
     @Transactional
     @SuppressWarnings("unchecked")
     public Map<String, Object> verify(String data, String transactionUuid, String transactionCode, String totalAmount) {
+        return verify(data, transactionUuid, transactionCode, totalAmount, null);
+    }
+
+    // transactionId == eSewa transaction_uuid (fresh per initiate, never the order id);
+    // transactionCode == eSewa transaction_code (gateway reference).
+    @Transactional
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> verify(String data, String transactionUuid, String transactionCode, String totalAmount, String userId) {
+
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("Authentication required");
+        }
 
         String uuid = transactionUuid;
 
@@ -285,10 +278,6 @@ public class EsewaService {
         String status = null;
 
         Map<String, Object> decoded = null;
-
-        // --------------------------------------------------------
-        // Decode eSewa callback
-        // --------------------------------------------------------
 
         if (data != null && !data.isBlank()) {
 
@@ -308,10 +297,6 @@ public class EsewaService {
                 if (uuid == null || signedFields == null || responseSignature == null) {
                     throw new IllegalArgumentException("Invalid eSewa response data");
                 }
-
-                // ------------------------------------------------
-                // Verify eSewa callback signature
-                // ------------------------------------------------
 
                 List<String> parts = new ArrayList<>();
 
@@ -339,27 +324,46 @@ public class EsewaService {
 
         final String lookupUuid = uuid;
 
-        // --------------------------------------------------------
-        // Find local payment
-        // --------------------------------------------------------
-
-        Payment payment = paymentRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc(lookupUuid, PaymentStatus.INITIATED).orElseGet(() ->
-                                paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc(lookupUuid).orElse(null));
-        if (payment == null) {
-            log.warn("No local eSewa payment found for UUID {}", uuid);
+        // Resolve order through the payment; fall back to legacy rows where uuid == orderId.
+        Payment payment = paymentRepository.findByTransactionId(lookupUuid).orElse(null);
+        Order order = null;
+        if (payment != null && payment.getOrder() != null) {
+            order = payment.getOrder();
+        } else {
+            Optional<Order> legacyOrder = orderRepository.findById(lookupUuid);
+            if (legacyOrder.isPresent()) {
+                order = legacyOrder.get();
+                log.info("Resolved legacy eSewa uuid {} as orderId {}", uuid, order.getId());
+                if (payment == null) {
+                    payment = paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId()).orElse(null);
+                }
+            }
         }
-
-        // --------------------------------------------------------
-        // Find order
-        // --------------------------------------------------------
-        Order order = payment != null && payment.getOrder() != null ? payment.getOrder() : orderRepository.findById(uuid).orElse(null);
         if (order == null) {
             throw new IllegalArgumentException("Order not found for transaction " + uuid);
         }
 
-        // --------------------------------------------------------
-        // Store ONLY the eSewa verification response
-        // --------------------------------------------------------
+        if (order.getUser() != null && !userId.equals(order.getUser().getUserId())) {
+            log.warn("eSewa verify denied: user {} does not own order {}", userId, order.getId());
+            throw new IllegalArgumentException("Order not found");
+        }
+
+        // Reject a signed callback whose amount differs from the order total.
+        if (decoded != null) {
+            Object decodedTotal = decoded.get("total_amount");
+            if (decodedTotal != null && order.getTotalAmount() != null) {
+                try {
+                    BigDecimal callbackTotal = new BigDecimal(decodedTotal.toString());
+                    if (callbackTotal.compareTo(order.getTotalAmount()) != 0) {
+                        log.warn("eSewa amount mismatch for uuid {} order {}: callback {} vs order {}",
+                                uuid, order.getId(), callbackTotal, order.getTotalAmount());
+                        throw new IllegalArgumentException("eSewa amount mismatch: callback total does not match order total");
+                    }
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Invalid eSewa total_amount");
+                }
+            }
+        }
 
         if (payment != null && decoded != null) {
             try {
@@ -376,17 +380,9 @@ public class EsewaService {
             }
         }
 
-        // --------------------------------------------------------
-        // Already paid
-        // --------------------------------------------------------
-
         if (order.getPaymentStatus() == OrderPaymentStatus.PAID) {
             return alreadyPaidResponse(order, payment, decoded);
         }
-
-        // --------------------------------------------------------
-        // Callback status is not COMPLETE
-        // --------------------------------------------------------
 
         if (status != null && !"COMPLETE".equalsIgnoreCase(status)) {
             if (payment != null) {
@@ -399,17 +395,8 @@ public class EsewaService {
 
             log.info("eSewa {} for order {} - marked EXPIRED", status, order.getId());
 
-            Map<String, Object> out = new HashMap<>();
-
-            if (decoded != null) {out.putAll(decoded);}
-            out.put("orderId", order.getId());
-            out.put("paymentStatus", order.getPaymentStatus().name());
-            return out;
+            return unifiedResponse(order, uuid, code, status, order.getPaymentStatus().name());
         }
-
-        // --------------------------------------------------------
-        // Verify payment with eSewa status API
-        // --------------------------------------------------------
 
         String checkTotal = totalStr != null ? totalStr : fmt(order.getTotalAmount());
 
@@ -420,71 +407,47 @@ public class EsewaService {
         if (!"COMPLETE".equalsIgnoreCase(checkStatus)) {
             log.info("eSewa status check returned {} for order {}", checkStatus, order.getId());
 
-            Map<String, Object> out = new HashMap<>(check);
-
-            out.put("orderId", order.getId());
-            out.put("paymentStatus", order.getPaymentStatus().name());
-            return out;
+            return unifiedResponse(order, uuid, str(check.get("transaction_code")), checkStatus, order.getPaymentStatus().name());
         }
-
-        // --------------------------------------------------------
-        // Lock order to prevent duplicate payment processing
-        // --------------------------------------------------------
 
         Order locked = orderRepository.findByIdForUpdate(order.getId()).orElse(null);
 
         if (locked != null) {
             order = locked;
-            Payment latest = paymentRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId()).orElse(null);
-
-            if (latest != null) {
-                payment = latest;
+            // Re-read the same payment by transactionId, not the latest for the order.
+            Payment fresh = paymentRepository.findByTransactionId(lookupUuid).orElse(null);
+            if (fresh != null) {
+                payment = fresh;
             }
 
             if (order.getPaymentStatus() == OrderPaymentStatus.PAID || (payment != null && payment.getStatus() == PaymentStatus.PAID)) {
-
-                return alreadyPaidResponse(order, payment, decoded
-                );
+                return alreadyPaidResponse(order, payment, decoded);
             }
         }
 
-        // --------------------------------------------------------
-        // Determine transaction code
-        // --------------------------------------------------------
-
         String txnCode = code != null ? code : str(check.get("transaction_code"));
-
-        // --------------------------------------------------------
-        // Mark payment as PAID
-        // --------------------------------------------------------
 
         if (payment != null) {
 
             payment.setStatus(PaymentStatus.PAID);
 
             if (txnCode != null && !txnCode.isBlank()) {
-                payment.setTransactionId(txnCode);
+                payment.setTransactionCode(txnCode);
             }
 
             paymentRepository.save(payment);
 
         } else {
-
-            String transactionId = txnCode != null && !txnCode.isBlank() ? txnCode : uuid;
-
             payment = paymentRepository.save(Payment.builder()
                                     .order(order)
                                     .amount(order.getTotalAmount())
                                     .method(PaymentMethod.ESEWA)
-                                    .transactionId(transactionId)
+                                    .transactionId(uuid)
+                                    .transactionCode(txnCode)
                                     .status(PaymentStatus.PAID)
                                     .build()
                     );
         }
-
-        // --------------------------------------------------------
-        // Update order
-        // --------------------------------------------------------
 
         order.setPaymentStatus(OrderPaymentStatus.PAID);
 
@@ -495,10 +458,6 @@ public class EsewaService {
         orderRepository.save(order);
 
         log.info("eSewa payment COMPLETE for order {} - marked PAID", order.getId());
-
-        // --------------------------------------------------------
-        // Clear cart
-        // --------------------------------------------------------
 
         final String paidOrderId = order.getId();
 
@@ -521,22 +480,20 @@ public class EsewaService {
             log.warn("Failed to clear cart after eSewa PAID order {}", paidOrderId, e);
         }
 
-        // --------------------------------------------------------
-        // Return final response
-        // --------------------------------------------------------
+        return unifiedResponse(order, uuid, txnCode, "COMPLETE", OrderPaymentStatus.PAID.name());
+    }
 
-        Map<String, Object> out = new HashMap<>(check);
+    private Map<String, Object> unifiedResponse(Order order, String transactionId, String transactionCode, String status, String paymentStatus) {
+        Map<String, Object> out = new HashMap<>();
         out.put("orderId", order.getId());
         out.put("orderNumber", order.getOrderNumber());
-        out.put("paymentStatus", OrderPaymentStatus.PAID.name());
-        out.put("transaction_id", txnCode);
+        out.put("paymentStatus", paymentStatus);
+        out.put("status", status);
+        out.put("transactionId", transactionId);
+        out.put("transactionCode", transactionCode);
         out.put("amountPaid", fmt(order.getTotalAmount()));
         return out;
     }
-
-    // ============================================================
-    // ALREADY PAID RESPONSE
-    // ============================================================
 
     private Map<String, Object> alreadyPaidResponse(
             Order order,
@@ -546,171 +503,61 @@ public class EsewaService {
 
         log.info("eSewa verify for already-PAID order {} - idempotent success", order.getId());
 
-        Map<String, Object> out = new HashMap<>();
+        String transactionId = payment != null ? payment.getTransactionId() : null;
+        String transactionCode = payment != null ? payment.getTransactionCode() : null;
         if (decoded != null) {
-            out.putAll(decoded);
+            if (transactionId == null) transactionId = str(decoded.get("transaction_uuid"));
+            if (transactionCode == null) transactionCode = str(decoded.get("transaction_code"));
+        }
+        if (transactionCode == null) {
+            Optional<Payment> latest =
+                    paymentRepository
+                            .findFirstByOrderIdOrderByCreatedAtDesc(
+                                    order.getId()
+                            );
+            if (latest.isPresent() && latest.get().getTransactionCode() != null) {
+                transactionCode = latest.get().getTransactionCode();
+            }
         }
 
-        out.put(
-                "orderId",
-                order.getId()
-        );
-
-        out.put(
-                "orderNumber",
-                order.getOrderNumber()
-        );
-
-        out.put(
-                "paymentStatus",
-                OrderPaymentStatus.PAID.name()
-        );
-
-        out.put(
-                "status",
-                "COMPLETE"
-        );
-
-        String txn =
-                payment != null
-                        ? payment.getTransactionId()
-                        : null;
-
-        Optional<Payment> latest =
-                paymentRepository
-                        .findFirstByOrderIdOrderByCreatedAtDesc(
-                                order.getId()
-                        );
-
-        if (latest.isPresent()
-                && latest.get().getTransactionId() != null) {
-
-            txn =
-                    latest.get().getTransactionId();
-        }
-
-        if (txn != null) {
-
-            out.put(
-                    "transaction_id",
-                    txn
-            );
-        }
-
-        out.put(
-                "amountPaid",
-                fmt(
-                        order.getTotalAmount()
-                )
-        );
-
-        return out;
+        return unifiedResponse(order, transactionId, transactionCode, "COMPLETE", OrderPaymentStatus.PAID.name());
     }
-
-    // ============================================================
-    // ESEWA STATUS CHECK
-    // ============================================================
 
     private Map<String, Object> statusCheck(
             String productCode,
             String transactionUuid,
             String totalAmount
     ) {
-
-        String url =
-                UriComponentsBuilder
-                        .fromUriString(
-                                statusUrl()
-                        )
-                        .queryParam(
-                                "product_code",
-                                productCode
-                        )
-                        .queryParam(
-                                "transaction_uuid",
-                                transactionUuid
-                        )
-                        .queryParam(
-                                "total_amount",
-                                totalAmount
-                        )
+        String url = UriComponentsBuilder
+                        .fromUriString(statusUrl())
+                        .queryParam("product_code", productCode)
+                        .queryParam("transaction_uuid", transactionUuid)
+                        .queryParam("total_amount", totalAmount)
                         .build(true)
                         .toUriString();
 
-        HttpHeaders headers =
-                new HttpHeaders();
-
-        headers.setAccept(
-                List.of(
-                        MediaType.APPLICATION_JSON
-                )
-        );
+        HttpHeaders headers = new HttpHeaders();
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
 
         try {
-
-            log.info(
-                    "Checking eSewa payment status for UUID {}",
-                    transactionUuid
-            );
-
-            ResponseEntity<Map> response =
-                    restTemplate.exchange(
+            log.info("Checking eSewa payment status for UUID {}", transactionUuid);
+            ResponseEntity<Map> response = restTemplate.exchange(
                             url,
                             HttpMethod.GET,
                             new HttpEntity<>(headers),
                             Map.class
                     );
-
             if (response.getBody() == null) {
-
-                throw new IllegalStateException(
-                        "Empty eSewa status response"
-                );
+                throw new IllegalStateException("Empty eSewa status response");
             }
-
-            /*
-             * IMPORTANT:
-             *
-             * statusCheck() does NOT update:
-             *
-             * payment.requestBody
-             * payment.responseBody
-             *
-             * The request/response fields belong to:
-             *
-             * initiate() -> requestBody
-             * verify()   -> responseBody
-             *
-             * The status-check response is only used
-             * internally to confirm payment status.
-             */
-
             return response.getBody();
-
         } catch (Exception e) {
-
-            log.error(
-                    "eSewa status check failed for UUID {}",
-                    transactionUuid,
-                    e
-            );
-
-            throw new IllegalStateException(
-                    "eSewa status check failed: "
-                            + e.getMessage(),
-                    e
-            );
+            log.error("eSewa status check failed for UUID {}", transactionUuid, e);
+            throw new IllegalStateException("eSewa status check failed: " + e.getMessage(), e);
         }
     }
 
-    // ============================================================
-    // STRING HELPER
-    // ============================================================
-
     private static String str(Object value) {
-
-        return value != null
-                ? value.toString()
-                : null;
+        return value != null ? value.toString() : null;
     }
 }

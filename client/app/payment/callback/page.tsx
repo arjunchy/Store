@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
@@ -24,7 +24,7 @@ function CallbackInner() {
   const purchaseOrderId = searchParams.get("purchase_order_id") || searchParams.get("purchase_order_name") || "";
   const txnStatus = searchParams.get("status") || "";
   const amount = searchParams.get("amount") || searchParams.get("total_amount") || "";
-  const transactionId = searchParams.get("transaction_id") || searchParams.get("tidx") || "";
+  const transactionId = searchParams.get("transactionId") || "";
 
   // Khalti reports money in paisa (e.g. 97092) – display in rupees (Rs. 970.92).
   function formatPaisaToRs(raw: unknown): string {
@@ -34,28 +34,40 @@ function CallbackInner() {
     return formatNPR(paisa / 100);
   }
 
+  // Shared lookup promise per `pidx` (see effect below).
+  const verifyKeyRef = useRef<string>("");
+  const verifyReqRef = useRef<Promise<any> | null>(null);
+
   useEffect(() => {
     if (!pidx) {
       setStatus("failed");
       setError("Missing pidx – invalid callback");
       return;
     }
+    // StrictMode double-invokes this effect with the same `pidx`, which used
+    // to fire two concurrent lookups that raced on payment/cart writes (409).
+    // Share one request per `pidx` so only one POST is sent.
+    if (verifyKeyRef.current !== pidx) {
+      verifyKeyRef.current = pidx;
+      verifyReqRef.current = null;
+    }
     let cancelled = false;
     async function verify() {
       try {
-        const res = await lookupKhalti(pidx);
+        if (!verifyReqRef.current) verifyReqRef.current = lookupKhalti(pidx);
+        const res = await verifyReqRef.current;
         if (cancelled) return;
         setDetail(res);
         const s = (res.status || txnStatus || "").toLowerCase();
         if (s === "completed") {
           setStatus("success");
           try {
-            await clearCheckout().catch(() => {});
-            try { await clearCart(); } catch {}
+            await clearCheckout().catch(() => { });
+            try { await clearCart(); } catch { }
             clearCartBackup();
-            try { sessionStorage.removeItem("khalti_pidx"); } catch {}
-            await refresh().catch(() => {});
-          } catch {}
+            try { sessionStorage.removeItem("khalti_pidx"); sessionStorage.removeItem("khalti_transactionId"); } catch { }
+            await refresh().catch(() => { });
+          } catch { }
         } else if (s === "pending" || s === "initiated") {
           setStatus("pending");
         } else if (s.includes("canceled") || s.includes("cancelled") || s === "expired" || s === "user canceled") {
@@ -64,17 +76,19 @@ function CallbackInner() {
           if (txnStatus.toLowerCase() === "completed") {
             setStatus("success");
             try {
-              await clearCheckout().catch(() => {});
-              try { await clearCart(); } catch {}
+              await clearCheckout().catch(() => { });
+              try { await clearCart(); } catch { }
               clearCartBackup();
-              await refresh().catch(() => {});
-            } catch {}
+              await refresh().catch(() => { });
+            } catch { }
           }
           else if (txnStatus.toLowerCase().includes("canceled")) setStatus("failed");
           else setStatus("pending");
         }
       } catch (e: any) {
         if (!cancelled) {
+          // Allow a later retry to issue a fresh request instead of reusing the rejected one.
+          if (verifyKeyRef.current === pidx) verifyReqRef.current = null;
           setError(e?.message || "Verification failed – please check Orders for final status. Use lookup for final truth.");
           setStatus("pending");
           setDetail({ pidx, status: txnStatus || "Unknown", amount, transaction_id: transactionId, purchase_order_id: purchaseOrderId });
@@ -98,7 +112,7 @@ function CallbackInner() {
           await refresh();
           router.push("/cart");
           return;
-        } catch {}
+        } catch { }
       }
       const raw = localStorage.getItem("apexcommerce_cart_backup");
       if (raw) {
@@ -108,7 +122,7 @@ function CallbackInner() {
           for (const it of backup) {
             try {
               await addToCart({ id: it.product_id || it.id, product_id: it.product_id || it.id, name: it.name, price: it.price, image: it.image, qty: it.qty ?? it.quantity ?? 1, quantity: it.qty ?? it.quantity ?? 1 } as any);
-            } catch {}
+            } catch { }
           }
           await refresh();
         }
@@ -142,7 +156,7 @@ function CallbackInner() {
               <div className="mt-4 bg-[#fafaf9] rounded-xl p-3 text-left text-[12px] border border-[#e7e5e4]">
                 <div className="flex justify-between"><span className="text-[#57534e]">pidx</span><span className="font-mono text-[#1c1917]">{detail?.pidx || pidx}</span></div>
                 <div className="flex justify-between"><span className="text-[#57534e]">amount</span><span className="font-semibold">{formatPaisaToRs(detail?.total_amount ?? amount)}</span></div>
-                <div className="flex justify-between"><span className="text-[#57534e]">Transaction ID</span><span className="font-mono">{detail?.transaction_id || transactionId || "—"}</span></div>
+                <div className="flex justify-between"><span className="text-[#57534e]">Transaction ID</span><span className="font-mono">{detail?.transactionId || transactionId || "—"}</span></div>
                 <div className="flex justify-between"><span className="text-[#57534e]">status</span><span className="text-[#15803d] font-semibold">{detail?.status || "Completed"}</span></div>
               </div>
               <div className="flex gap-2 justify-center mt-6">
@@ -185,7 +199,6 @@ function CallbackInner() {
             </>
           )}
         </div>
-        <p className="text-[11px] text-[#57534e] mt-4 text-center">Return URL: <span className="font-mono">{typeof window !== "undefined" ? window.location.href : ""}</span><br/>Only <b>Completed</b> is success – always use lookup for final truth.</p>
       </main>
       <Footer />
     </div>

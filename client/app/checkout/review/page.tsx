@@ -128,7 +128,7 @@ function ReviewInner() {
         const khalti = await initiateKhaltiPayment(order.id);
         const url = (khalti as any).paymentUrl || (khalti as any).payment_url;
         if (!url) throw new Error("Khalti did not return payment_url – check KHALTI_SECRET_KEY");
-        try { sessionStorage.setItem("khalti_pidx", khalti.pidx); sessionStorage.setItem("khalti_orderId", order.id); } catch {}
+        try { sessionStorage.setItem("khalti_pidx", khalti.pidx); sessionStorage.setItem("khalti_transactionId", khalti.transactionId || ""); sessionStorage.setItem("khalti_orderId", order.id); } catch {}
         await clearCheckout().catch(() => {});
         window.location.href = url;
         return;
@@ -203,7 +203,7 @@ function ReviewInner() {
         const khalti = await initiateKhaltiPayment(pendingOrderId);
         const url = (khalti as any).paymentUrl || (khalti as any).payment_url;
         if (!url) throw new Error("Khalti did not return payment_url – check KHALTI_SECRET_KEY");
-        try { sessionStorage.setItem("khalti_pidx", khalti.pidx); sessionStorage.setItem("khalti_orderId", pendingOrderId); } catch {}
+        try { sessionStorage.setItem("khalti_pidx", khalti.pidx); sessionStorage.setItem("khalti_transactionId", khalti.transactionId || ""); sessionStorage.setItem("khalti_orderId", pendingOrderId); } catch {}
         await clearCheckout().catch(() => {});
         window.location.href = url;
         return;

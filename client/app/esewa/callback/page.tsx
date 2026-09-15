@@ -51,15 +51,15 @@ function CallbackInner() {
         if (ps === "PAID" || esewaStatus === "COMPLETE") {
           setStatus("success");
           try {
-            await clearCheckout().catch(() => {});
-            try { await clearCart(); } catch {}
+            await clearCheckout().catch(() => { });
+            try { await clearCart(); } catch { }
             clearCartBackup();
             try {
               sessionStorage.removeItem("esewa_uuid");
               sessionStorage.removeItem("apexcommerce_pending_order_id");
-            } catch {}
-            await refresh().catch(() => {});
-          } catch {}
+            } catch { }
+            await refresh().catch(() => { });
+          } catch { }
         } else {
           setStatus("failed");
           setError(`eSewa reports ${res?.status || "non-COMPLETE"} – order not marked PAID. Cart preserved.`);
@@ -91,7 +91,7 @@ function CallbackInner() {
           await refresh();
           router.push("/cart");
           return;
-        } catch {}
+        } catch { }
       }
       const raw = localStorage.getItem("apexcommerce_cart_backup");
       if (raw) {
@@ -101,7 +101,7 @@ function CallbackInner() {
           for (const it of backup) {
             try {
               await addToCart({ id: it.product_id || it.id, product_id: it.product_id || it.id, name: it.name, price: it.price, image: it.image, qty: it.qty ?? it.quantity ?? 1, quantity: it.qty ?? it.quantity ?? 1 } as any);
-            } catch {}
+            } catch { }
           }
           await refresh();
         }
@@ -116,7 +116,8 @@ function CallbackInner() {
 
   const orderId = detail?.orderId || detail?.order_id || "";
   const orderNumber = detail?.orderNumber || detail?.order_number || "";
-  const txnCode = detail?.transaction_id || detail?.transaction_code || detail?.transactionCode || "";
+  const txnId = detail?.transactionId || detail?.transactionUuid || detail?.transaction_uuid || detail?.transaction_id || "";
+  const txnCode = detail?.transactionCode || detail?.txnCode || detail?.txn_code || detail?.transaction_code || txnId;
   const amountPaidRaw = detail?.amountPaid ?? detail?.total_amount ?? detail?.totalAmount ?? "";
   const amountPaid = amountPaidRaw === "" || amountPaidRaw === null || amountPaidRaw === undefined || !isFinite(Number(amountPaidRaw))
     ? "—"
@@ -141,7 +142,8 @@ function CallbackInner() {
               <h1 className="font-bold text-[22px] text-[#1c1917] mt-4">Payment Completed</h1>
               <p className="text-[13px] text-[#57534e] mt-1">Your eSewa payment was verified. Order <span className="font-mono font-semibold text-[#1c1917]">{orderNumber || orderId.slice(0, 8)}</span> is confirmed. Cart cleared.</p>
               <div className="mt-4 bg-[#fafaf9] rounded-xl p-3 text-left text-[12px] border border-[#e7e5e4]">
-                <div className="flex justify-between"><span className="text-[#57534e]">Transaction ID</span><span className="font-mono text-[#1c1917]">{txnCode || "—"}</span></div>
+                <div className="flex justify-between"><span className="text-[#57534e]">Transaction ID</span><span className="font-mono text-[#1c1917]">{txnId || "—"}</span></div>
+                <div className="flex justify-between"><span className="text-[#57534e]">Txn Code</span><span className="font-mono text-[#1c1917]">{txnCode || "—"}</span></div>
                 <div className="flex justify-between"><span className="text-[#57534e]">Amount Paid</span><span className="font-semibold text-[#1c1917]">{amountPaid}</span></div>
                 <div className="flex justify-between"><span className="text-[#57534e]">status</span><span className="text-[#15803d] font-semibold">{detail?.status || "COMPLETE"}</span></div>
                 <div className="flex justify-between"><span className="text-[#57534e]">payment</span><span className="text-[#15803d] font-semibold">PAID</span></div>

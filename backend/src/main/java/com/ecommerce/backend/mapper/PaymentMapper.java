@@ -17,6 +17,7 @@ public class PaymentMapper {
                 payment.getAmount(),
                 payment.getMethod() != null? payment.getMethod().name() : null,
                 payment.getTransactionId(),
+                payment.getTransactionCode(),
                 payment.getStatus() != null ? payment.getStatus().name() : null,
                 payment.getCreatedAt()
         );

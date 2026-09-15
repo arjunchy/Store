@@ -7,11 +7,17 @@ type PaymentResponse = {
   amount: number;
   method: string;
   transactionId: string;
+  // Canonical key is transactionCode; txnCode/txn_code accepted for backward compat.
+  transactionCode?: string;
+  txnCode?: string;
+  txn_code?: string;
   status: string;
   createdAt: string;
 };
 
 function mapPayment(res: PaymentResponse): Payment {
+  const transactionCode =
+    (res as any).transactionCode ?? (res as any).txnCode ?? (res as any).txn_code;
   return {
     id: res.id,
     order_id: res.orderId,
@@ -19,6 +25,9 @@ function mapPayment(res: PaymentResponse): Payment {
     method: res.method as Payment["method"],
     transaction_id: res.transactionId,
     transactionId: res.transactionId,
+    transactionCode,
+    txn_code: transactionCode,
+    txnCode: transactionCode,
     status: res.status as Payment["status"],
     amount: res.amount,
     createdAt: res.createdAt,
@@ -44,6 +53,8 @@ export async function getPaymentByOrder(orderId: string): Promise<Payment | null
 
 export type KhaltiInitiateResponse = {
   pidx: string;
+  // Our server-generated reference (Payment.transactionId).
+  transactionId?: string;
   paymentUrl: string;
   payment_url?: string;
   expiresAt?: string;
@@ -63,6 +74,7 @@ export async function initiateKhaltiPayment(orderId: string): Promise<KhaltiInit
   );
   return {
     pidx: (res as any).pidx,
+    transactionId: (res as any).transactionId,
     paymentUrl: (res as any).paymentUrl || (res as any).payment_url,
     payment_url: (res as any).paymentUrl || (res as any).payment_url,
     expiresAt: (res as any).expiresAt || (res as any).expires_at,

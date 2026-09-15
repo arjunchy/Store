@@ -5,6 +5,7 @@ import com.ecommerce.backend.entity.Order;
 import com.ecommerce.backend.entity.OrderItem;
 import com.ecommerce.backend.entity.Payment;
 import com.ecommerce.backend.enums.OrderPaymentStatus;
+import com.ecommerce.backend.enums.OrderStatus;
 import com.ecommerce.backend.enums.PaymentMethod;
 import com.ecommerce.backend.enums.PaymentStatus;
 import com.ecommerce.backend.repository.CartRepository;
@@ -23,6 +24,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
@@ -32,7 +34,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
+import java.util.UUID;
 
 @Service
 @Slf4j
@@ -105,7 +107,7 @@ public class KhaltiService {
             throw new IllegalArgumentException("Order not found");
         }
 
-        if (order.getStatus() == com.ecommerce.backend.enums.OrderStatus.CANCELED) {
+        if (order.getStatus() == OrderStatus.CANCELED) {
             throw new IllegalArgumentException("Cannot pay for a canceled order");
         }
 
@@ -114,14 +116,12 @@ public class KhaltiService {
         }
 
         Optional<Payment> existingInitiated = paymentRepository.findFirstByOrderIdAndStatusOrderByCreatedAtDesc(orderId, PaymentStatus.INITIATED);
-
         if (existingInitiated.isPresent()) {
             Payment existingPayment = existingInitiated.get();
-
             if (existingPayment.getPaymentUrl() != null && existingPayment.getPidx() != null) {
-
                 return new KhaltiInitiateResponse(
                         existingPayment.getPidx(),
+                        existingPayment.getTransactionId(),
                         existingPayment.getPaymentUrl(),
                         null,
                         1800,
@@ -138,13 +138,11 @@ public class KhaltiService {
         }
 
         BigDecimal total = order.getTotalAmount();
-
         if (total == null) {
             throw new IllegalStateException("Order amount not available");
         }
 
         int amountPaisa = total.multiply(BigDecimal.valueOf(100)).intValueExact();
-
         if (amountPaisa < 1000) {
             throw new IllegalArgumentException("Amount should be greater than Rs. 10 (1000 paisa)");
         }
@@ -154,7 +152,6 @@ public class KhaltiService {
         }
 
         Map<String, Object> payload = new HashMap<>();
-
         payload.put("return_url", returnUrl);
         payload.put("website_url", websiteUrl);
         payload.put("amount", amountPaisa);
@@ -162,37 +159,27 @@ public class KhaltiService {
         payload.put("purchase_order_name", "ApexCommerce Order " + order.getOrderNumber());
 
         Map<String, String> customerInfo = new HashMap<>();
-
         customerInfo.put("name", order.getUser().getUsername());
         customerInfo.put("email", order.getUser().getEmail());
         customerInfo.put("phone", "9800000000");
-
         payload.put("customer_info", customerInfo);
 
         try {
             List<OrderItem> items = orderItemRepository.findByOrderIdWithProduct(orderId);
-
             List<Map<String, Object>> productDetails = items.stream().map(item -> {
-
-                                Map<String, Object> product = new HashMap<>();
-
-                                product.put("identity", item.getProduct() != null ? item.getProduct().getId() : item.getId());
-                                product.put("name", item.getProduct() != null ? item.getProduct().getName() : "Item");
-
-                                int unitPrice = item.getPrice().multiply(BigDecimal.valueOf(100)).intValue();
-                                int quantity = item.getQuantity() != null ? item.getQuantity() : 1;
-
-                                product.put("unit_price", unitPrice);
-                                product.put("quantity", quantity);
-                                product.put("total_price", unitPrice * quantity);
-                                return product;
-                            })
-                            .collect(Collectors.toList());
-
+                        Map<String, Object> product = new HashMap<>();
+                        product.put("identity", item.getProduct() != null ? item.getProduct().getId() : item.getId());
+                        product.put("name", item.getProduct() != null ? item.getProduct().getName() : "Item");
+                        int unitPrice = item.getPrice().multiply(BigDecimal.valueOf(100)).intValue();
+                        int quantity = item.getQuantity() != null ? item.getQuantity() : 1;
+                        product.put("unit_price", unitPrice);
+                        product.put("quantity", quantity);
+                        product.put("total_price", unitPrice * quantity);
+                        return product;
+                    }).toList();
             if (!productDetails.isEmpty()) {
                 payload.put("product_details", productDetails);
             }
-
         } catch (Exception e) {
             log.warn("Failed to build product_details for order {}", orderId, e);
         }
@@ -200,7 +187,6 @@ public class KhaltiService {
         payload.put("amount_breakdown", List.of(Map.of("label", "Total", "amount", amountPaisa)));
 
         String requestBody;
-
         try {
             requestBody = objectMapper.writeValueAsString(payload);
         } catch (Exception e) {
@@ -211,7 +197,6 @@ public class KhaltiService {
 
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Key " + secretKey);
-
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
@@ -226,7 +211,6 @@ public class KhaltiService {
             Map body = response.getBody();
 
             String responseBody;
-
             try {
                 responseBody = objectMapper.writeValueAsString(body);
             } catch (Exception e) {
@@ -238,7 +222,6 @@ public class KhaltiService {
             String expiresAtStr = (String) body.get("expires_at");
             Integer expiresIn = body.get("expires_in") != null ? ((Number) body.get("expires_in")).intValue() : 1800;
             OffsetDateTime expiresAt = null;
-
             try {
                 if (expiresAtStr != null) {
                     expiresAt = OffsetDateTime.parse(expiresAtStr);
@@ -251,11 +234,13 @@ public class KhaltiService {
                 throw new IllegalStateException("Invalid Khalti response: " + body);
             }
 
+            String transactionId = "TXN-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+
             Payment payment = Payment.builder()
                             .order(order)
                             .amount(total)
                             .method(PaymentMethod.KHALTI)
-                            .transactionId(pidx)
+                            .transactionId(transactionId)
                             .pidx(pidx)
                             .paymentUrl(paymentUrl)
                             .status(PaymentStatus.INITIATED)
@@ -267,6 +252,7 @@ public class KhaltiService {
 
             return new KhaltiInitiateResponse(
                     pidx,
+                    transactionId,
                     paymentUrl,
                     expiresAt,
                     expiresIn,
@@ -278,18 +264,16 @@ public class KhaltiService {
 
         } catch (RestClientException e) {
             String msg = e.getMessage() != null ? e.getMessage() : "";
-            boolean is401 = e instanceof org.springframework.web.client.HttpClientErrorException.Unauthorized || msg.contains("401");
-
-            if (is401) {throw new IllegalStateException("Khalti authentication failed (401) - " + "invalid KHALTI_SECRET_KEY", e);
+            boolean is401 = e instanceof HttpClientErrorException.Unauthorized || msg.contains("401");
+            if (is401) {
+                throw new IllegalStateException("Khalti authentication failed (401) - invalid KHALTI_SECRET_KEY", e);
             }
-
             throw new IllegalStateException("Failed to initiate Khalti payment: " + e.getMessage(), e);
         }
     }
 
     @Transactional
     public Map<String, Object> lookup(String pidx, String userId) {
-
         if (pidx == null || pidx.isBlank()) {
             throw new IllegalArgumentException("pidx is required");
         }
@@ -297,13 +281,11 @@ public class KhaltiService {
             throw new IllegalArgumentException("Authentication required");
         }
 
-        Optional<Payment> opt = paymentRepository.findByPidx(pidx);
+        // Write-lock the payment so concurrent lookups for the same pidx
+        // serialize instead of racing on payment/order/cart writes (409s).
+        Payment payment = paymentRepository.findByPidxForUpdate(pidx).orElse(null);
 
-        Payment payment = opt.orElse(null);
-
-        // Ownership check — a caller may only look up their own payment.
-        // Without this, any authenticated user could confirm/expire/cancel
-        // another user's order by guessing its pidx (IDOR).
+        // A caller may only look up their own payment (IDOR guard).
         if (payment != null && payment.getOrder() != null
                 && payment.getOrder().getUser() != null
                 && !userId.equals(payment.getOrder().getUser().getUserId())) {
@@ -311,21 +293,21 @@ public class KhaltiService {
             throw new IllegalArgumentException("Payment not found");
         }
 
-        String orderId = payment != null && payment.getOrder() != null ? payment.getOrder().getId() : null;
+        if (payment != null && payment.getOrder() != null) {
+            orderRepository.findByIdForUpdate(payment.getOrder().getId());
+        }
 
-        if (!isConfigured()) {throw new IllegalStateException("Khalti not configured - set KHALTI_SECRET_KEY");
+        if (!isConfigured()) {
+            throw new IllegalStateException("Khalti not configured - set KHALTI_SECRET_KEY");
         }
 
         String url = baseUrl().endsWith("/") ? baseUrl() + "epayment/lookup/" : baseUrl() + "/epayment/lookup/";
 
         HttpHeaders headers = new HttpHeaders();
-
-        headers.set("Authorization","Key " + secretKey);
-
+        headers.set("Authorization", "Key " + secretKey);
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         Map<String, String> payload = Map.of("pidx", pidx);
-
         HttpEntity<Map<String, String>> entity = new HttpEntity<>(payload, headers);
 
         try {
@@ -338,53 +320,46 @@ public class KhaltiService {
             }
 
             String status = (String) body.get("status");
-
-            String transactionId = (String) body.get("transaction_id");
+            // Khalti sends its id as `transaction_id` (ePayment v2); older flows use `tidx`.
+            Object gatewayCodeRaw = body.get("transaction_id") != null ? body.get("transaction_id") : body.get("tidx");
+            String gatewayCode = gatewayCodeRaw != null ? String.valueOf(gatewayCodeRaw) : null;
 
             if (payment != null && status != null) {
-
                 if ("Completed".equalsIgnoreCase(status)) {
-
-                    // Amount + order binding checks — the lookup response must
-                    // describe THIS order for its full total. Otherwise a
-                    // cheaper/different Khalti transaction could confirm it.
                     assertLookupMatchesOrder(body, payment.getOrder(), pidx);
 
+                    boolean newlyPaid = payment.getStatus() != PaymentStatus.PAID
+                            || payment.getOrder().getPaymentStatus() != OrderPaymentStatus.PAID;
                     payment.setStatus(PaymentStatus.PAID);
 
-                    payment.setTransactionId(transactionId != null ? transactionId : payment.getTransactionId());
+                    if (gatewayCode != null && !gatewayCode.isBlank()) {
+                        payment.setTransactionCode(gatewayCode);
+                    }
 
                     payment.getOrder().setPaymentStatus(OrderPaymentStatus.PAID);
-
-                    if (payment.getOrder().getStatus() == com.ecommerce.backend.enums.OrderStatus.PROCESSING) {
-
-                        payment.getOrder().setStatus(com.ecommerce.backend.enums.OrderStatus.CONFIRMED);
+                    if (payment.getOrder().getStatus() == OrderStatus.PROCESSING) {
+                        payment.getOrder().setStatus(OrderStatus.CONFIRMED);
                     }
 
-                    try {
-                        String uid = payment.getOrder().getUser() != null ? payment.getOrder().getUser().getUserId() : null;
-
-                        if (uid != null) {
-                            cartRepository.findByUserId(uid).ifPresent(cart -> {
-                                        if (cart.getCartItems() != null && !cart.getCartItems().isEmpty()) {
-                                            cart.getCartItems().clear();
-                                            cartRepository.save(cart);
-                                        }
-                                    });
+                    if (newlyPaid) {
+                        try {
+                            String uid = payment.getOrder().getUser() != null ? payment.getOrder().getUser().getUserId() : null;
+                            if (uid != null) {
+                                cartRepository.findByUserId(uid).ifPresent(cart -> {
+                                    if (cart.getCartItems() != null && !cart.getCartItems().isEmpty()) {
+                                        cart.getCartItems().clear();
+                                        cartRepository.save(cart);
+                                    }
+                                });
+                            }
+                        } catch (Exception e) {
+                            log.warn("Failed to clear cart after Khalti payment {}", pidx, e);
                         }
-
-                    } catch (Exception e) {
-                        log.warn("Failed to clear cart after Khalti payment {}", pidx, e);
                     }
-
                 } else if ("User canceled".equalsIgnoreCase(status) || "Expired".equalsIgnoreCase(status)) {
-
                     payment.setStatus(PaymentStatus.EXPIRED);
-
                     payment.getOrder().setPaymentStatus(OrderPaymentStatus.EXPIRED);
-
                 } else if ("Refunded".equalsIgnoreCase(status) || "Partially Refunded".equalsIgnoreCase(status)) {
-
                     payment.setStatus(PaymentStatus.REFUNDED);
                     payment.getOrder().setPaymentStatus(OrderPaymentStatus.REFUNDED);
                 } else if ("Pending".equalsIgnoreCase(status) || "Initiated".equalsIgnoreCase(status)) {
@@ -394,26 +369,31 @@ public class KhaltiService {
                 paymentRepository.save(payment);
                 orderRepository.save(payment.getOrder());
             }
-            return body;
+
+            Map<String, Object> out = new HashMap<>(body);
+            out.remove("transaction_id");
+            out.remove("tidx");
+            out.put("orderId", payment != null && payment.getOrder() != null ? payment.getOrder().getId() : null);
+            out.put("orderNumber", payment != null && payment.getOrder() != null ? payment.getOrder().getOrderNumber() : null);
+            out.put("paymentStatus", payment != null && payment.getOrder() != null ? payment.getOrder().getPaymentStatus().name() : null);
+            out.put("transactionId", payment != null ? payment.getTransactionId() : null);
+            String storedCode = payment != null ? payment.getTransactionCode() : null;
+
+            if (storedCode == null) storedCode = gatewayCode;
+            out.put("txnCode", storedCode);
+            return out;
 
         } catch (RestClientException e) {
-
             String msg = e.getMessage() != null ? e.getMessage() : "";
-
-            boolean is401 = e instanceof org.springframework.web.client.HttpClientErrorException.Unauthorized || msg.contains("401");
-
+            boolean is401 = e instanceof HttpClientErrorException.Unauthorized || msg.contains("401");
             if (is401) {
-                throw new IllegalStateException("Khalti authentication failed (401) - " + "invalid KHALTI_SECRET_KEY", e);
+                throw new IllegalStateException("Khalti authentication failed (401) - invalid KHALTI_SECRET_KEY", e);
             }
             throw new IllegalStateException("Lookup failed: " + e.getMessage(), e);
         }
     }
 
-    /**
-     * Validates that a Khalti {@code Completed} lookup response really belongs to
-     * the given order: the paid {@code total_amount} (paisa) must equal the order
-     * total, and {@code purchase_order_id} must match the order number when present.
-     */
+    // Lookup response must match this order's number and full total (paisa).
     private void assertLookupMatchesOrder(Map<?, ?> body, Order order, String pidx) {
         Object purchaseOrderId = body.get("purchase_order_id");
         if (purchaseOrderId != null && order.getOrderNumber() != null
